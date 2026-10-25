@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual envs
+.venv/
+venv/
+env/
+ENV/
+
+# HuggingFace / model cache
+*.bin
+*.safetensors
+*.onnx
+*.pt
+*.pth
+
+# Data (large files — add your own corpus separately)
+data/*.jsonl
+data/*.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+*.key
+
+# Logs / outputs
+*.log
+results/
+outputs/
