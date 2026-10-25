@@ -67,19 +67,14 @@ Medical Question
 # 1. Install dependencies
 pip install -r requirements.txt
 
-# 2. Run demo (mock LLM, no API key needed)
-python main.py --demo --backend mock --no-reranker
+# 2. Launch Interactive Streamlit Web UI (Recommended)
+streamlit run app.py
 
-# 3. Interactive mode with OpenAI
-export OPENAI_API_KEY=sk-...
-python main.py
-
-# 4. Single question with Groq
-export GROQ_API_KEY=gsk_...
+# 3. Terminal CLI mode
 python main.py -q "Is metformin safe for patients with renal impairment?"
 
-# 5. Custom corpus
-python main.py --corpus data/pubmed.jsonl --max-rounds 4
+# 4. Built-in demo questions
+python main.py --demo
 ```
 
 ---

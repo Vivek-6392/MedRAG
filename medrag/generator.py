@@ -208,7 +208,7 @@ Return ONE concise search query (≤10 words). No explanation, just the query.""
             return original_question
         claims_text = "\n".join(f"- {c.claim}" for c in weak_claims[:3])
         prompt = self._GAP_QUERY_PROMPT.format(
-            question=original_question, weak_claims=claims_text
+            question=original_question, weak_claims=claims_text)
         query = self.llm.complete(prompt, max_tokens=60).strip().strip('"').strip("'")
         return query if query else original_question
 
