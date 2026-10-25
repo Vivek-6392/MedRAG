@@ -12,3 +12,4 @@ torch>=2.0.0
 
 # Utilities
 tqdm>=4.66.0
+python-dotenv>=1.0.0

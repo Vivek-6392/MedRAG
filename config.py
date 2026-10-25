@@ -41,13 +41,33 @@ class MedRagConfig:
 
     @classmethod
     def from_env(cls) -> "MedRagConfig":
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+        except ImportError:
+            pass
+
         cfg = cls()
+        backend = os.environ.get("LLM_BACKEND", "").strip().lower()
+        if backend:
+            cfg.llm_backend = backend
+
         if os.environ.get("OPENAI_API_KEY"):
             cfg.llm_api_key = os.environ["OPENAI_API_KEY"]
-            cfg.llm_backend = "openai"
+            if not backend:
+                cfg.llm_backend = "openai"
+            if os.environ.get("OPENAI_MODEL"):
+                cfg.llm_model = os.environ["OPENAI_MODEL"]
         elif os.environ.get("GROQ_API_KEY"):
             cfg.llm_api_key = os.environ["GROQ_API_KEY"]
-            cfg.llm_backend = "groq"
+            if not backend:
+                cfg.llm_backend = "groq"
             cfg.llm_base_url = "https://api.groq.com/openai/v1"
-            cfg.llm_model = "llama-3.3-70b-versatile"
+            cfg.llm_model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+        if os.environ.get("LLM_MODEL"):
+            cfg.llm_model = os.environ["LLM_MODEL"]
+        if os.environ.get("LLM_BASE_URL"):
+            cfg.llm_base_url = os.environ["LLM_BASE_URL"]
+
         return cfg

@@ -2,8 +2,6 @@
 
 **Reliable Medical Question Answering via Structured Evidence Reasoning**
 
-> IIIT Nagpur · Guided by Dr. Pooja Jain  
-> Vivek Yadav · Jayant Dhaka · Ojaswa Awasthi
 
 ---
 
