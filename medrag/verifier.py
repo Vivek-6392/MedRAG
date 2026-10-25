@@ -134,6 +134,7 @@ class NLIVerifier:
                     source_quality=best_doc.quality_score,
                     clinical_risk=clinical_risk,
                     missing=(max_ent < 0.30),
+                    best_snippet=best_doc.text[:350],
                 )
             )
 

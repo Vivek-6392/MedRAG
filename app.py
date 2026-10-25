@@ -413,8 +413,14 @@ if "latest_result" in st.session_state:
 
     # ── Tab 2: Claims Matrix ──────────────────────────────────────────────────
     with tab_claims:
-        if state and state.claims:
-            st.markdown(f"**Decomposed into {len(state.claims)} Atomic Clinical Claims:**")
+        claims_list = (
+            getattr(state, "claims", None)
+            or getattr(state, "claim_evidences", [])
+            if state
+            else []
+        )
+        if claims_list:
+            st.markdown(f"**Decomposed into {len(claims_list)} Atomic Clinical Claims:**")
 
             badge_map = {
                 "supported": ("badge-supported", "✓ SUPPORTED"),
@@ -423,38 +429,43 @@ if "latest_result" in st.session_state:
                 "uncertain": ("badge-uncertain", "~ UNCERTAIN"),
             }
 
-            for idx, c in enumerate(state.claims):
+            for idx, c in enumerate(claims_list):
+                status_val = c.status.value if hasattr(c.status, "value") else str(c.status)
                 badge_class, badge_label = badge_map.get(
-                    c.status.value, ("badge-uncertain", c.status.value.upper())
+                    status_val, ("badge-uncertain", status_val.upper())
                 )
 
-                with st.expander(f"Claim {idx+1}: {c.claim}", expanded=(c.status.value != "supported")):
+                with st.expander(f"Claim {idx+1}: {c.claim}", expanded=(status_val != "supported")):
                     st.markdown(f'<span class="badge {badge_class}">{badge_label}</span>', unsafe_allow_html=True)
                     st.write("")
 
                     c1, c2 = st.columns(2)
                     c1.progress(
-                        min(max(c.support_score, 0.0), 1.0),
+                        min(max(float(c.support_score), 0.0), 1.0),
                         text=f"Entailment / Support: {c.support_score:.2%}",
                     )
                     c2.progress(
-                        min(max(c.conflict_score, 0.0), 1.0),
+                        min(max(float(c.conflict_score), 0.0), 1.0),
                         text=f"Contradiction / Conflict: {c.conflict_score:.2%}",
                     )
 
-                    if c.best_doc:
-                        st.markdown(
-                            f"**Top Evidence Match:** *{c.best_doc.title}* ({c.best_doc.source}, {c.best_doc.year})"
-                        )
-                        st.caption(f"Excerpt: \"{c.best_doc.text[:350]}...\"")
+                    best_src = getattr(c, "best_source", "")
+                    best_snip = getattr(c, "best_snippet", "")
+                    rec_yr = getattr(c, "recency_year", "")
+                    if best_src:
+                        yr_str = f" ({rec_yr})" if rec_yr else ""
+                        st.markdown(f"**Top Evidence Match:** *{best_src}*{yr_str}")
+                    if best_snip:
+                        st.caption(f"Excerpt: \"{best_snip}...\"")
         else:
             st.info("No decomposed claims available for this query.")
 
     # ── Tab 3: Trajectory ─────────────────────────────────────────────────────
     with tab_trajectory:
         st.markdown("**Adaptive Retrieval & Verification Log:**")
-        if result.trajectory:
-            for step in result.trajectory:
+        trajectory_log = getattr(result, "trajectory", None) or getattr(result, "history", [])
+        if trajectory_log:
+            for step in trajectory_log:
                 rnd = step.get("round", 0) + 1
                 q = step.get("query", "")
                 docs_count = step.get("new_docs", 0)

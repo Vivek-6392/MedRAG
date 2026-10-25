@@ -27,6 +27,7 @@ class ClaimEvidence:
     source_quality: float = 0.5     # 0–1 journal quality
     clinical_risk: float = 0.5      # 0–1 risk level of this claim
     missing: bool = False           # True when no document provides support
+    best_snippet: str = ""          # short excerpt from the best supporting document
 
     # ── derived properties ──────────────────────────────────────────────────
 
@@ -77,6 +78,11 @@ class EvidenceState:
     """
     claim_evidences: List[ClaimEvidence] = field(default_factory=list)
     round_number: int = 0
+
+    @property
+    def claims(self) -> List[ClaimEvidence]:
+        """Alias for claim_evidences."""
+        return self.claim_evidences
 
     # ── aggregate statistics ────────────────────────────────────────────────
 

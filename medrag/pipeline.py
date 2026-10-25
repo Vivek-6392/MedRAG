@@ -30,6 +30,11 @@ class PipelineResult:
     history: List[Dict[str, Any]] = field(default_factory=list)
     latency_seconds: float = 0.0
 
+    @property
+    def trajectory(self) -> List[Dict[str, Any]]:
+        """Alias for history (round-by-round trajectory)."""
+        return self.history
+
     def print_summary(self) -> None:
         sep = "=" * 72
         print(f"\n{sep}")
