@@ -243,7 +243,7 @@ class MedRagPipeline:
                 question, state.weakest_claims
             )
             print(f"  Gap query: {gap_query!r}")
-            search_query = gap_query
+            search_query = gap_query if gap_query and gap_query.strip() else (cq.search_query or question)
             round_num += 1
 
         return PipelineResult(
