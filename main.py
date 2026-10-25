@@ -1,23 +1,22 @@
 """
-MedRag — Main Entry Point
+MedRag - Main Entry Point
 Adaptive Evidence-Aware Retrieval and Verification Framework
 for Reliable Medical Question Answering
 
-Usage examples
-──────────────
+Usage examples:
   # Interactive mode (mock LLM, built-in corpus):
   python main.py
 
-  # Single question with OpenAI:
+  # Single question:
   python main.py -q "Is metformin safe for patients with renal impairment?"
 
-  # Demo questions with Groq:
-  python main.py --demo --backend groq --model llama-3.3-70b-versatile
+  # Demo questions:
+  python main.py --demo
 
   # Custom corpus + max rounds:
   python main.py --corpus data/pubmed.jsonl --max-rounds 4 -q "..."
 
-  # Disable reranker for faster (less accurate) retrieval:
+  # Disable reranker for faster retrieval:
   python main.py --no-reranker --demo
 """
 from __future__ import annotations
@@ -26,6 +25,14 @@ import argparse
 import json
 import os
 import sys
+
+# Configure UTF-8 stdout/stderr on Windows to prevent charmap encoding errors
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 # ── Sample corpus ─────────────────────────────────────────────────────────────
 
@@ -293,29 +300,40 @@ def main() -> None:
 
     # ── LLM backend ───────────────────────────────────────────────────────────
     from medrag import LLMClient
-    backend = args.backend
-    model = args.model
-    api_key = args.api_key
-    base_url = args.base_url
+    backend = args.backend if args.backend != "auto" else config.llm_backend
+
+    # Use model name from .env only
+    model = (
+        getattr(config, "llm_model", None)
+        or os.environ.get("LLM_MODEL")
+        or (os.environ.get("GROQ_MODEL") if backend == "groq" else None)
+        or (os.environ.get("OPENAI_MODEL") if backend == "openai" else None)
+        or os.environ.get("MODEL")
+    )
+
+    api_key = args.api_key or getattr(config, "llm_api_key", None)
+    base_url = args.base_url or getattr(config, "llm_base_url", None)
 
     if backend == "auto":
-        if os.environ.get("OPENAI_API_KEY"):
-            backend, model = "openai", model or "gpt-4o-mini"
-        elif os.environ.get("GROQ_API_KEY"):
+        if os.environ.get("GROQ_API_KEY"):
             backend = "groq"
             api_key = api_key or os.environ.get("GROQ_API_KEY")
-            base_url = base_url or "https://api.groq.com/openai/v1"
-            model = model or "llama-3.3-70b-versatile"
+            base_url = base_url or os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+        elif os.environ.get("OPENAI_API_KEY"):
+            backend = "openai"
+            api_key = api_key or os.environ.get("OPENAI_API_KEY")
         else:
             backend = "mock"
             print("[Info] No LLM API key found — using mock backend (for testing).")
-            print("[Info] Set OPENAI_API_KEY or GROQ_API_KEY for real answers.\n")
+            print("[Info] Set GROQ_API_KEY or OPENAI_API_KEY in .env for real answers.\n")
+
+    print(f"[LLM] Backend: {backend} | Model: {model}")
 
     llm = LLMClient(
         backend=backend,
-        model=model or getattr(config, "llm_model", "gpt-4o-mini"),
-        api_key=api_key or getattr(config, "llm_api_key", None),
-        base_url=base_url or getattr(config, "llm_base_url", None),
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
     )
 
     # ── Corpus ────────────────────────────────────────────────────────────────
