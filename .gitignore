@@ -26,6 +26,16 @@ ENV/
 hf_cache/
 
 # Benchmark datasets & clinical textbooks (Do NOT commit copyrighted or benchmark data)
+data/
+data_clean/
+.medrag/
+textbooks/
+*.jsonl
+*.txt
+!requirements.txt
+!requirements-*.txt
+!tests/**/*.txt
+!docs/**/*.txt
 data/medqa/
 data/pubmedqa/
 data/textbooks/
@@ -34,6 +44,8 @@ data/*.jsonl
 data/*.txt
 data/benchmarks/
 benchmarks/data/
+ori_pqal.json
+test_ground_truth.json
 
 # Environment secrets and credentials
 .env

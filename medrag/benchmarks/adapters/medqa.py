@@ -160,18 +160,38 @@ class MedQAAdapter(DatasetAdapter):
     def _resolve_split_path(self, split: str) -> Optional[str]:
         """Resolves target file path for official splits."""
         env_dir = os.environ.get("MEDQA_DATA_DIR")
-        candidate_paths = [
-            self.data_path,
-            os.path.join(env_dir, f"{split}.jsonl") if env_dir else None,
-            os.path.join(env_dir, "questions", "US", f"{split}.jsonl") if env_dir else None,
-            os.path.join(env_dir, "data_clean", "questions", "US", f"{split}.jsonl") if env_dir else None,
-            os.path.join("data", "medqa", f"{split}.jsonl"),
-            os.path.join("data", "medqa", "questions", "US", f"{split}.jsonl"),
-            os.path.join("data", "medqa", "data_clean", "questions", "US", f"{split}.jsonl"),
+        dirs_to_check = []
+        if self.data_path:
+            if os.path.isfile(self.data_path):
+                return self.data_path
+            dirs_to_check.append(self.data_path)
+        if env_dir:
+            dirs_to_check.append(env_dir)
+        dirs_to_check.extend([
+            os.path.join("data", "medqa"),
+            os.path.expanduser(os.path.join("~", ".medrag", "data", "medqa")),
+        ])
+
+        candidate_filenames = [
+            f"{split}.jsonl",
+            f"phrases_no_exclude_{split}.jsonl",
+            os.path.join("4_options", f"{split}.jsonl"),
+            os.path.join("4_options", f"phrases_no_exclude_{split}.jsonl"),
+            os.path.join("questions", "US", "4_options", f"phrases_no_exclude_{split}.jsonl"),
+            os.path.join("questions", "US", "4_options", f"{split}.jsonl"),
+            os.path.join("questions", "US", f"{split}.jsonl"),
+            os.path.join("data_clean", "questions", "US", "4_options", f"phrases_no_exclude_{split}.jsonl"),
+            os.path.join("data_clean", "questions", "US", "4_options", f"{split}.jsonl"),
+            os.path.join("data_clean", "questions", "US", f"{split}.jsonl"),
         ]
-        for p in candidate_paths:
-            if p and os.path.exists(p):
-                return p
+
+        for base_dir in dirs_to_check:
+            if not base_dir:
+                continue
+            for fname in candidate_filenames:
+                p = os.path.join(base_dir, fname)
+                if os.path.isfile(p):
+                    return p
         return None
 
     def normalize_example(
