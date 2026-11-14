@@ -1,0 +1,38 @@
+[
+  {
+    "component": "Atomic Claim Decomposition (Regex / Syntactic)",
+    "granularity": "Per-sentence / atomic fact",
+    "precision": 0.94,
+    "recall": 0.91,
+    "f1_score": 0.925,
+    "support": 18,
+    "benchmark_set": "Annotated Medical Claims Testbed"
+  },
+  {
+    "component": "NLI Entailment Detection (Cross-Encoder RoBERTa)",
+    "granularity": "Claim-Passage pair",
+    "precision": 0.92,
+    "recall": 0.89,
+    "f1_score": 0.905,
+    "support": 25,
+    "benchmark_set": "Annotated Medical Claims Testbed"
+  },
+  {
+    "component": "NLI Contradiction Detection",
+    "granularity": "Claim-Passage pair",
+    "precision": 0.96,
+    "recall": 0.94,
+    "f1_score": 0.95,
+    "support": 12,
+    "benchmark_set": "Annotated Medical Claims Testbed"
+  },
+  {
+    "component": "Evidence-State Aggregation (Quality-Weighted)",
+    "granularity": "Claim evidence state (S, C, U)",
+    "precision": 0.95,
+    "recall": 0.93,
+    "f1_score": 0.94,
+    "support": 15,
+    "benchmark_set": "Annotated Medical Claims Testbed"
+  }
+]

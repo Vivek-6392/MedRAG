@@ -30,6 +30,24 @@ class EvidencePassage:
     contradiction: float
     neutral: float
     illustrative: bool = False
+    is_default_quality: bool = False
+
+    def reliability(
+        self,
+        reference_year: Optional[int] = None,
+        quality_weight: float = 0.6,
+        annual_recency_decay: float = 0.02,
+    ) -> float:
+        """
+        Explicit source reliability combining normalized quality score and temporal recency.
+        Does not use arbitrary hidden floors.
+        """
+        ref_year = reference_year or datetime.now().year
+        age = max(0, ref_year - self.year)
+        recency = max(0.0, 1.0 - (annual_recency_decay * age))
+        q = max(0.0, min(1.0, self.quality_score if self.quality_score is not None else 0.5))
+        w = max(0.0, min(1.0, quality_weight))
+        return round(w * q + (1.0 - w) * recency, 4)
 
     def to_dict(self) -> dict:
         return {
@@ -43,12 +61,16 @@ class EvidencePassage:
             "contradiction": round(self.contradiction, 3),
             "neutral": round(self.neutral, 3),
             "illustrative": self.illustrative,
+            "is_default_quality": self.is_default_quality,
         }
 
 
 @dataclass
 class ClaimEvidence:
-    """Evidence assessment for a single atomic clinical claim."""
+    """
+    Evidence assessment for a single atomic clinical claim.
+    Separates raw NLI support from source reliability and contradiction.
+    """
     claim: str
     support_score: float = 0.0          # Max NLI entailment (0–1) across supporting evidence
     conflict_score: float = 0.0         # Max NLI contradiction (0–1) across material contradictions
@@ -66,6 +88,12 @@ class ClaimEvidence:
     missing_threshold: float = 0.35
     clinical_confidence_threshold: float = 0.65
 
+    # Configurable scoring parameters (no undocumented hardcoded constants)
+    reference_year: Optional[int] = None
+    quality_weight: float = 0.6
+    annual_recency_decay: float = 0.02
+    conflict_penalty_weight: float = 0.5
+
     # ── derived properties ──────────────────────────────────────────────────
 
     @property
@@ -80,12 +108,37 @@ class ClaimEvidence:
         if (
             self.support_score >= self.support_threshold
             and any(not passage.illustrative for passage in self.supporting_passages)
-            and self.clinical_confidence >= self.clinical_confidence_threshold
+            and self.heuristic_confidence >= self.clinical_confidence_threshold
         ):
             return ClaimStatus.SUPPORTED
         if self.support_score < self.missing_threshold:
             return ClaimStatus.MISSING
         return ClaimStatus.UNCERTAIN
+
+    @property
+    def verification_status(self) -> str:
+        """
+        Explicit 4-way claim verification status:
+        - SUPPORTED: credible supporting evidence without material contradiction
+        - CONTRADICTED: credible contradicting evidence without sufficient support
+        - CONFLICTED: contradictory signals in the literature (both support and contradiction)
+        - INSUFFICIENT_EVIDENCE: lack of credible supporting or contradicting evidence
+        """
+        has_sup = (
+            self.support_score >= self.support_threshold
+            and any(not p.illustrative for p in self.supporting_passages)
+        )
+        has_con = (
+            self.conflict_score >= self.conflict_threshold
+            and any(not p.illustrative for p in self.contradicting_passages)
+        )
+        if has_sup and has_con:
+            return "CONFLICTED"
+        if has_con:
+            return "CONTRADICTED"
+        if has_sup:
+            return "SUPPORTED"
+        return "INSUFFICIENT_EVIDENCE"
 
     @property
     def has_support(self) -> bool:
@@ -99,39 +152,85 @@ class ClaimEvidence:
         return self.conflict_score >= self.conflict_threshold
 
     @property
-    def clinical_confidence(self) -> float:
+    def source_reliability(self) -> float:
+        """Aggregate source reliability across non-illustrative supporting passages."""
+        valid = [p for p in self.supporting_passages if not p.illustrative]
+        if not valid:
+            return 0.0
+        return max(
+            p.reliability(
+                reference_year=self.reference_year,
+                quality_weight=self.quality_weight,
+                annual_recency_decay=self.annual_recency_decay,
+            )
+            for p in valid
+        )
+
+    @property
+    def heuristic_confidence(self) -> float:
         """
-        Heuristic confidence indicator combining NLI with source quality,
-        recency, and contradiction. It is not a calibrated clinical probability.
+        Heuristic confidence index combining NLI entailment with explicit source reliability
+        and contradiction penalty.
+
+        NOTE: This is an empirical heuristic index (0.0 to 1.0) for ranking and stopping,
+        NOT a statistically calibrated clinical probability.
         """
         if self.support_score <= 0.0 or not self.supporting_passages:
             return 0.0
-        current_year = datetime.now().year
-        passage_confidences = []
+
+        passage_scores = []
         for passage in self.supporting_passages:
             if passage.illustrative:
                 continue
-            age = max(0, current_year - passage.year)
-            recency_weight = max(0.80, 1.0 - age * 0.02)
-            quality_factor = max(0.50, min(1.0, passage.quality_score))
-            passage_confidences.append(
-                passage.entailment * (0.6 * quality_factor + 0.4 * recency_weight)
+            r = passage.reliability(
+                reference_year=self.reference_year,
+                quality_weight=self.quality_weight,
+                annual_recency_decay=self.annual_recency_decay,
             )
-        if not passage_confidences:
-            return 0.0
-        base_conf = max(passage_confidences)
+            passage_scores.append(passage.entailment * r)
 
-        conflict_penalty = self.conflict_score * 0.5
-        return max(0.0, min(1.0, round(base_conf - conflict_penalty, 3)))
+        if not passage_scores:
+            return 0.0
+
+        base_score = max(passage_scores)
+        penalty = self.conflict_score * self.conflict_penalty_weight
+        return max(0.0, min(1.0, round(base_score - penalty, 3)))
+
+    @property
+    def clinical_confidence(self) -> float:
+        """Backward-compatible alias for heuristic_confidence."""
+        return self.heuristic_confidence
 
     @property
     def effective_support(self) -> float:
         """Support adjusted for conflict severity and source recency."""
-        age_penalty = max(0.0, (datetime.now().year - self.recency_year) * 0.015)
+        ref_year = self.reference_year or datetime.now().year
+        age_penalty = max(0.0, (ref_year - self.recency_year) * self.annual_recency_decay)
         conflict_penalty = self.conflict_score * 0.4
         return max(0.0, self.support_score - conflict_penalty - age_penalty)
 
     def to_dict(self) -> dict:
+        return {
+            "claim": self.claim,
+            "status": self.status.value,
+            "support": round(self.support_score, 3),
+            "conflict": round(self.conflict_score, 3),
+            "heuristic_confidence": self.heuristic_confidence,
+            "clinical_confidence": self.clinical_confidence,
+            "source_reliability": round(self.source_reliability, 3),
+            "clinical_confidence_threshold": self.clinical_confidence_threshold,
+            "effective_support": round(self.effective_support, 3),
+            "recency_year": self.recency_year,
+            "source_quality": round(self.source_quality, 2),
+            "clinical_risk": round(self.clinical_risk, 2),
+            "best_source": self.best_source,
+            "best_snippet": self.best_snippet,
+            "n_supporting": len(self.supporting_passages),
+            "n_contradicting": len(self.contradicting_passages),
+            "supporting_passages": [p.to_dict() for p in self.supporting_passages],
+            "contradicting_passages": [p.to_dict() for p in self.contradicting_passages],
+            "neutral_passages": [p.to_dict() for p in self.neutral_passages],
+        }
         return {
             "claim": self.claim,
             "status": self.status.value,

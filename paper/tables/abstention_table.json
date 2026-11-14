@@ -1,0 +1,66 @@
+[
+  {
+    "configuration": "closed_book",
+    "coverage": 0.0,
+    "abstention_rate": 1.0,
+    "selective_accuracy": 0.0,
+    "selective_risk": 0.0,
+    "risk_coverage_product": 0.0
+  },
+  {
+    "configuration": "single_pass_dense_rag",
+    "coverage": 1.0,
+    "abstention_rate": 0.0,
+    "selective_accuracy": 1.0,
+    "selective_risk": 0.0,
+    "risk_coverage_product": 0.0
+  },
+  {
+    "configuration": "single_pass_bm25_rag",
+    "coverage": 1.0,
+    "abstention_rate": 0.0,
+    "selective_accuracy": 1.0,
+    "selective_risk": 0.0,
+    "risk_coverage_product": 0.0
+  },
+  {
+    "configuration": "hybrid_rag",
+    "coverage": 1.0,
+    "abstention_rate": 0.0,
+    "selective_accuracy": 1.0,
+    "selective_risk": 0.0,
+    "risk_coverage_product": 0.0
+  },
+  {
+    "configuration": "hybrid_reranked_rag",
+    "coverage": 1.0,
+    "abstention_rate": 0.0,
+    "selective_accuracy": 1.0,
+    "selective_risk": 0.0,
+    "risk_coverage_product": 0.0
+  },
+  {
+    "configuration": "claim_verified_rag",
+    "coverage": 1.0,
+    "abstention_rate": 0.0,
+    "selective_accuracy": 1.0,
+    "selective_risk": 0.0,
+    "risk_coverage_product": 0.0
+  },
+  {
+    "configuration": "iterative_rag",
+    "coverage": 1.0,
+    "abstention_rate": 0.0,
+    "selective_accuracy": 1.0,
+    "selective_risk": 0.0,
+    "risk_coverage_product": 0.0
+  },
+  {
+    "configuration": "full_medrag",
+    "coverage": 1.0,
+    "abstention_rate": 0.0,
+    "selective_accuracy": 1.0,
+    "selective_risk": 0.0,
+    "risk_coverage_product": 0.0
+  }
+]

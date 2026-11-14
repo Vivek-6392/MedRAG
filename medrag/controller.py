@@ -75,10 +75,19 @@ class EvidenceController:
                 confidence=0.0,
             )
 
+        from .risk_policy import ClinicalRiskPolicy
+
+        eff_support, eff_conflict, allow_partial = ClinicalRiskPolicy.compute_effective_thresholds(
+            base_support=self.support_threshold,
+            base_conflict=self.conflict_threshold,
+            risk_score=state.max_clinical_risk,
+            high_risk_threshold=self.high_risk_threshold,
+        )
+
         # ── 1. STOP / VERIFIED ────────────────────────────────────────────────
         if state.is_sufficient(
-            self.support_threshold,
-            self.conflict_threshold,
+            eff_support,
+            eff_conflict,
             self.clinical_confidence_threshold,
         ):
             return ControllerDecision(
@@ -86,7 +95,7 @@ class EvidenceController:
                 reason=(
                     f"All {len(state.claims)} claims meet configured evidence criteria "
                     f"(mean support={state.mean_support:.2f}, max conflict={state.max_conflict:.2f}, "
-                    f"support threshold={self.support_threshold:.2f}, "
+                    f"effective support threshold={eff_support:.2f}, "
                     f"clinical confidence threshold={self.clinical_confidence_threshold:.2f}, "
                     f"clinical risk={state.max_clinical_risk:.2f})."
                 ),
@@ -123,7 +132,7 @@ class EvidenceController:
             )
 
         # 3b. PARTIAL — Some claims verified, others missing/uncertain, risk permitting
-        if len(state.supported_claims) > 0 and state.max_clinical_risk < self.high_risk_threshold:
+        if len(state.supported_claims) > 0 and allow_partial:
             return ControllerDecision(
                 action=Action.PARTIAL,
                 reason=(
@@ -135,13 +144,16 @@ class EvidenceController:
             )
 
         # 3c. ABSTAIN — Insufficient or unsafe evidence
+        reason_detail = (
+            f"Clinical risk tier ({state.max_clinical_risk:.2f} >= {self.high_risk_threshold:.2f}) "
+            "strictly prohibits issuing incomplete recommendations."
+            if not allow_partial and len(state.supported_claims) > 0
+            else f"Insufficient evidence after {rnd} retrieval round(s) "
+                 f"({len(state.missing_claims)} missing, {len(state.uncertain_claims)} uncertain, "
+                 f"clinical risk={state.max_clinical_risk:.2f})."
+        )
         return ControllerDecision(
             action=Action.ABSTAIN,
-            reason=(
-                f"Insufficient evidence after {rnd} retrieval round(s) "
-                f"({len(state.missing_claims)} missing, {len(state.uncertain_claims)} uncertain, "
-                f"clinical risk={state.max_clinical_risk:.2f}). "
-                "Withholding clinical recommendation for patient safety."
-            ),
+            reason=f"{reason_detail} Withholding clinical recommendation for patient safety.",
             confidence=state.mean_confidence,
         )

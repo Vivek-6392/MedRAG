@@ -34,6 +34,8 @@ class RetrievedDocument:
     bm25_rank: Optional[int] = None
     dense_rank: Optional[int] = None
     rerank_score: Optional[float] = None
+    bm25_score: Optional[float] = None
+    dense_score: Optional[float] = None
 
     @property
     def final_score(self) -> float:
@@ -69,6 +71,7 @@ class BM25Retriever:
                 document=self._docs[i],
                 score=float(scores[i]),
                 bm25_rank=rank + 1,
+                bm25_score=float(scores[i]),
             )
             for rank, i in enumerate(indices)
         ]
@@ -86,7 +89,11 @@ class DenseRetriever:
     def _load(self) -> None:
         if self._model is None:
             from sentence_transformers import SentenceTransformer
-            self._model = SentenceTransformer(self.model_name)
+            try:
+                # Cache-first / offline-friendly loading to prevent network timeouts
+                self._model = SentenceTransformer(self.model_name, local_files_only=True)
+            except Exception:
+                self._model = SentenceTransformer(self.model_name)
 
     def index(self, documents: List[Document]) -> None:
         self._docs = documents
@@ -111,6 +118,7 @@ class DenseRetriever:
                 document=self._docs[i],
                 score=float(scores[i]),
                 dense_rank=rank + 1,
+                dense_score=float(scores[i]),
             )
             for rank, i in enumerate(indices)
         ]
@@ -126,7 +134,11 @@ class CrossEncoderReranker:
     def _load(self) -> None:
         if self._model is None:
             from sentence_transformers import CrossEncoder
-            self._model = CrossEncoder(self.model_name)
+            try:
+                # Cache-first / offline-friendly loading to prevent network timeouts
+                self._model = CrossEncoder(self.model_name, local_files_only=True)
+            except Exception:
+                self._model = CrossEncoder(self.model_name)
 
     def rerank(
         self,
@@ -154,28 +166,63 @@ def reciprocal_rank_fusion(
     dense_weight: float = 0.6,
     k: int = 60,
 ) -> List[RetrievedDocument]:
-    """Weighted RRF combining BM25 and Dense rankings."""
-    scores: Dict[str, float] = {}
-    doc_map: Dict[str, RetrievedDocument] = {}
+    """
+    Weighted Reciprocal Rank Fusion (RRF) combining BM25 and Dense candidate rankings.
+
+    Guarantees:
+    - Merges documents retrieved by both modalities.
+    - Preserves both `bm25_rank` and `dense_rank` accurately on merged records.
+    - Preserves raw component scores (`bm25_score`, `dense_score`).
+    - Deterministic tie-breaking on identical RRF scores.
+    - Removes internal duplicate document IDs.
+    - Handles empty BM25 or Dense sets gracefully.
+    """
+    if not bm25_results and not dense_results:
+        return []
+
+    doc_map: Dict[str, Document] = {}
+    bm25_ranks: Dict[str, int] = {}
+    dense_ranks: Dict[str, int] = {}
+    bm25_scores: Dict[str, float] = {}
+    dense_scores: Dict[str, float] = {}
+    rrf_scores: Dict[str, float] = {}
 
     for rank, rdoc in enumerate(bm25_results):
         did = rdoc.document.doc_id
-        scores[did] = scores.get(did, 0.0) + bm25_weight / (k + rank + 1)
-        doc_map[did] = rdoc
+        if did not in doc_map:
+            doc_map[did] = rdoc.document
+        # Use recorded rank if present, else 1-based iteration rank
+        b_rank = rdoc.bm25_rank if rdoc.bm25_rank is not None else (rank + 1)
+        bm25_ranks[did] = b_rank
+        bm25_scores[did] = rdoc.bm25_score if rdoc.bm25_score is not None else rdoc.score
+        rrf_scores[did] = rrf_scores.get(did, 0.0) + bm25_weight / (k + b_rank)
 
     for rank, rdoc in enumerate(dense_results):
         did = rdoc.document.doc_id
-        scores[did] = scores.get(did, 0.0) + dense_weight / (k + rank + 1)
-        doc_map.setdefault(did, rdoc)
+        if did not in doc_map:
+            doc_map[did] = rdoc.document
+        d_rank = rdoc.dense_rank if rdoc.dense_rank is not None else (rank + 1)
+        dense_ranks[did] = d_rank
+        dense_scores[did] = rdoc.dense_score if rdoc.dense_score is not None else rdoc.score
+        rrf_scores[did] = rrf_scores.get(did, 0.0) + dense_weight / (k + d_rank)
+
+    # Sort deterministically: highest RRF score first; break ties by best individual rank, then doc_id
+    def _sort_key(did: str):
+        best_rank = min(bm25_ranks.get(did, 999999), dense_ranks.get(did, 999999))
+        return (-rrf_scores[did], best_rank, did)
+
+    sorted_ids = sorted(doc_map.keys(), key=_sort_key)
 
     return [
         RetrievedDocument(
-            document=doc_map[did].document,
-            score=sc,
-            bm25_rank=doc_map[did].bm25_rank,
-            dense_rank=doc_map[did].dense_rank,
+            document=doc_map[did],
+            score=round(rrf_scores[did], 6),
+            bm25_rank=bm25_ranks.get(did),
+            dense_rank=dense_ranks.get(did),
+            bm25_score=bm25_scores.get(did),
+            dense_score=dense_scores.get(did),
         )
-        for did, sc in sorted(scores.items(), key=lambda x: -x[1])
+        for did in sorted_ids
     ]
 
 

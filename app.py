@@ -8,9 +8,11 @@ import json
 import os
 import sys
 import time
-from typing import List, Optional
 
 import streamlit as st
+
+# Prevent OpenMP runtime clash on Windows
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 # Ensure UTF-8 output on Windows
 if sys.platform == "win32":
@@ -29,8 +31,8 @@ except Exception:
     pass
 
 from config import DEFAULT_GROQ_MODEL, MedRagConfig
-from main import _build_sample_corpus, load_corpus_file
-from medrag import Action, Document, LLMClient, MedRagPipeline
+from main import _build_sample_corpus
+from medrag import LLMClient, MedRagPipeline
 
 # ── Page Configuration ────────────────────────────────────────────────────────
 st.set_page_config(
@@ -168,11 +170,16 @@ with st.sidebar:
         default_model = ""
     model_name = st.text_input("Model Name (from .env)", value=default_model)
 
-    api_key = env_cfg.llm_api_key or ""
+    has_groq_key = bool(os.environ.get("GROQ_API_KEY"))
+    has_openai_key = bool(os.environ.get("OPENAI_API_KEY"))
     if backend == "groq":
-        st.caption("✅ Groq API Key loaded from `.env`" if api_key else "⚠️ No Groq API Key found in `.env`")
+        st.caption("✅ Groq API Key detected in environment" if has_groq_key else "⚠️ No Groq API Key found in `.env`")
     elif backend == "openai":
-        st.caption("✅ OpenAI API Key loaded from `.env`" if api_key else "⚠️ No OpenAI API Key found in `.env`")
+        st.caption("✅ OpenAI API Key detected in environment" if has_openai_key else "⚠️ No OpenAI API Key found in `.env`")
+    elif backend == "ollama":
+        st.caption("ℹ️ Ollama uses local server (no API key required)")
+    else:
+        st.caption("ℹ️ Mock backend uses offline rule-based extraction (for testing)")
 
     st.divider()
 
@@ -270,39 +277,34 @@ if run_clicked:
 
     # Determine corpus
     if uploaded_file is not None:
+        if uploaded_file.size > 50 * 1024 * 1024:
+            st.error("Uploaded file exceeds maximum allowed size (50 MB).")
+            st.stop()
         try:
+            from medrag.document_validator import validate_corpus
             if uploaded_file.name.endswith(".jsonl"):
-                content = uploaded_file.getvalue().decode("utf-8")
+                content = uploaded_file.getvalue().decode("utf-8", errors="replace")
                 items = [json.loads(line) for line in content.splitlines() if line.strip()]
             else:
-                items = json.loads(uploaded_file.getvalue().decode("utf-8"))
+                items = json.loads(uploaded_file.getvalue().decode("utf-8", errors="replace"))
             if not isinstance(items, list):
                 items = [items]
-            if any(not isinstance(d.get("metadata", {}), dict) for d in items):
-                raise ValueError("Each document's metadata field must be a JSON object.")
-            documents = [
-                Document(
-                    doc_id=str(d.get("id", i)),
-                    title=d.get("title", ""),
-                    text=d.get("text", d.get("abstract", "")),
-                    source=d.get("source", ""),
-                    year=int(d.get("year", 2024)),
-                    quality_score=float(d.get("quality_score", 0.5)),
-                    metadata=d.get("metadata", {}),
-                )
-                for i, d in enumerate(items)
-            ]
-            st.success(f"Loaded custom corpus with {len(documents)} documents.")
+            documents = validate_corpus(items)
+            st.success(f"Loaded and validated custom corpus with {len(documents)} documents.")
         except Exception as e:
-            st.error(f"Error parsing uploaded file: {e}")
+            st.error(f"Error validating uploaded corpus: {e}")
             st.stop()
     else:
         documents = get_sample_corpus()
 
-    # Build config & LLM Client
+    # Build config & LLM Client with centralized provider resolver
     cfg = MedRagConfig.from_env()
-    cfg.llm_backend = backend
-    cfg.llm_model = model_name
+    try:
+        cfg.resolve_for_backend(backend=backend, model=model_name or None)
+    except Exception as exc:
+        st.error(f"Provider configuration error: {exc}")
+        st.stop()
+
     cfg.support_threshold = support_threshold
     cfg.conflict_threshold = conflict_threshold
     cfg.clinical_confidence_threshold = clinical_confidence_threshold
@@ -637,3 +639,13 @@ if "latest_result" in st.session_state:
                 st.write(doc.text)
                 final_score = getattr(rdoc, "final_score", getattr(rdoc, "rerank_score", getattr(rdoc, "score", 0.0)))
                 st.caption(f"Doc ID: {doc.doc_id} | Final Relevance Score: {final_score:.4f}")
+
+# ── Academic Research & Clinical Safety Disclaimer ────────────────────────────
+st.markdown("---")
+st.caption(
+    "⚠️ **Academic Research Disclaimer:** MedRAG is a research prototype designed to evaluate "
+    "retrieval-augmented generation, claim-level evidence verification, and selective abstention. "
+    "It is NOT a certified medical device, does NOT guarantee clinical safety or HIPAA compliance, "
+    "and must NOT be used for direct clinical diagnosis or patient treatment decisions."
+)
+

@@ -1,0 +1,194 @@
+[
+  {
+    "configuration": "closed_book",
+    "sample_size": 2,
+    "raw_accuracy": 0.0,
+    "raw_accuracy_ci": [
+      0.0,
+      0.6576
+    ],
+    "selective_accuracy": 0.0,
+    "selective_accuracy_ci": [
+      0.0,
+      0.7935
+    ],
+    "coverage": 0.0,
+    "coverage_ci": [
+      0.0,
+      0.6576
+    ],
+    "abstention_rate": 1.0,
+    "macro_f1": 0.0,
+    "mean_latency_s": 0.0,
+    "status": "Validated Smoke Suite",
+    "full_scale_target": "Pending Cloud GPU Run (N=1,273)"
+  },
+  {
+    "configuration": "single_pass_dense_rag",
+    "sample_size": 2,
+    "raw_accuracy": 1.0,
+    "raw_accuracy_ci": [
+      0.3424,
+      1.0
+    ],
+    "selective_accuracy": 1.0,
+    "selective_accuracy_ci": [
+      0.3424,
+      1.0
+    ],
+    "coverage": 1.0,
+    "coverage_ci": [
+      0.3424,
+      1.0
+    ],
+    "abstention_rate": 0.0,
+    "macro_f1": 1.0,
+    "mean_latency_s": 0.18,
+    "status": "Validated Smoke Suite",
+    "full_scale_target": "Pending Cloud GPU Run (N=1,273)"
+  },
+  {
+    "configuration": "single_pass_bm25_rag",
+    "sample_size": 2,
+    "raw_accuracy": 1.0,
+    "raw_accuracy_ci": [
+      0.3424,
+      1.0
+    ],
+    "selective_accuracy": 1.0,
+    "selective_accuracy_ci": [
+      0.3424,
+      1.0
+    ],
+    "coverage": 1.0,
+    "coverage_ci": [
+      0.3424,
+      1.0
+    ],
+    "abstention_rate": 0.0,
+    "macro_f1": 1.0,
+    "mean_latency_s": 0.01,
+    "status": "Validated Smoke Suite",
+    "full_scale_target": "Pending Cloud GPU Run (N=1,273)"
+  },
+  {
+    "configuration": "hybrid_rag",
+    "sample_size": 2,
+    "raw_accuracy": 1.0,
+    "raw_accuracy_ci": [
+      0.3424,
+      1.0
+    ],
+    "selective_accuracy": 1.0,
+    "selective_accuracy_ci": [
+      0.3424,
+      1.0
+    ],
+    "coverage": 1.0,
+    "coverage_ci": [
+      0.3424,
+      1.0
+    ],
+    "abstention_rate": 0.0,
+    "macro_f1": 1.0,
+    "mean_latency_s": 0.41,
+    "status": "Validated Smoke Suite",
+    "full_scale_target": "Pending Cloud GPU Run (N=1,273)"
+  },
+  {
+    "configuration": "hybrid_reranked_rag",
+    "sample_size": 2,
+    "raw_accuracy": 1.0,
+    "raw_accuracy_ci": [
+      0.3424,
+      1.0
+    ],
+    "selective_accuracy": 1.0,
+    "selective_accuracy_ci": [
+      0.3424,
+      1.0
+    ],
+    "coverage": 1.0,
+    "coverage_ci": [
+      0.3424,
+      1.0
+    ],
+    "abstention_rate": 0.0,
+    "macro_f1": 1.0,
+    "mean_latency_s": 0.97,
+    "status": "Validated Smoke Suite",
+    "full_scale_target": "Pending Cloud GPU Run (N=1,273)"
+  },
+  {
+    "configuration": "claim_verified_rag",
+    "sample_size": 2,
+    "raw_accuracy": 1.0,
+    "raw_accuracy_ci": [
+      0.3424,
+      1.0
+    ],
+    "selective_accuracy": 1.0,
+    "selective_accuracy_ci": [
+      0.3424,
+      1.0
+    ],
+    "coverage": 1.0,
+    "coverage_ci": [
+      0.3424,
+      1.0
+    ],
+    "abstention_rate": 0.0,
+    "macro_f1": 1.0,
+    "mean_latency_s": 13.68,
+    "status": "Validated Smoke Suite",
+    "full_scale_target": "Pending Cloud GPU Run (N=1,273)"
+  },
+  {
+    "configuration": "iterative_rag",
+    "sample_size": 2,
+    "raw_accuracy": 1.0,
+    "raw_accuracy_ci": [
+      0.3424,
+      1.0
+    ],
+    "selective_accuracy": 1.0,
+    "selective_accuracy_ci": [
+      0.3424,
+      1.0
+    ],
+    "coverage": 1.0,
+    "coverage_ci": [
+      0.3424,
+      1.0
+    ],
+    "abstention_rate": 0.0,
+    "macro_f1": 1.0,
+    "mean_latency_s": 41.13,
+    "status": "Validated Smoke Suite",
+    "full_scale_target": "Pending Cloud GPU Run (N=1,273)"
+  },
+  {
+    "configuration": "full_medrag",
+    "sample_size": 2,
+    "raw_accuracy": 1.0,
+    "raw_accuracy_ci": [
+      0.3424,
+      1.0
+    ],
+    "selective_accuracy": 1.0,
+    "selective_accuracy_ci": [
+      0.3424,
+      1.0
+    ],
+    "coverage": 1.0,
+    "coverage_ci": [
+      0.3424,
+      1.0
+    ],
+    "abstention_rate": 0.0,
+    "macro_f1": 1.0,
+    "mean_latency_s": 39.94,
+    "status": "Validated Smoke Suite",
+    "full_scale_target": "Pending Cloud GPU Run (N=1,273)"
+  }
+]

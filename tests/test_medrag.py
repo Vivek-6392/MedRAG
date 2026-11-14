@@ -16,11 +16,11 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from medrag.evidence_state import EvidencePassage, ClaimEvidence, EvidenceState, ClaimStatus
-from medrag.controller import EvidenceController, Action, ControllerDecision
-from medrag.retriever import Document, RetrievedDocument, BM25Retriever, HybridRetriever
+from medrag.controller import EvidenceController, Action
+from medrag.retriever import Document, RetrievedDocument, HybridRetriever
 from medrag.generator import LLMClient, AnswerGenerator, GeneratedAnswer
 from medrag.verifier import NLIVerifier
-from medrag.pipeline import MedRagPipeline, PipelineResult
+from medrag.pipeline import MedRagPipeline
 from config import MedRagConfig
 
 
@@ -439,7 +439,7 @@ class TestGeneratorAndErrorHandling(unittest.TestCase):
         llm = LLMClient(backend="openai", api_key="invalid-key")
         # Force a failure during complete
         with patch.object(llm, "_get_client", return_value=MagicMock(chat=MagicMock(completions=MagicMock(create=MagicMock(side_effect=RuntimeError("API Connection Timeout")))))):
-            resp = llm.complete("Test medical prompt")
+            _resp = llm.complete("Test medical prompt")
             self.assertTrue(llm.call_failed)
             self.assertIn("API Connection Timeout", llm.last_error)
 

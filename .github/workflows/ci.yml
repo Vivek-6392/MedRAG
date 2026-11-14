@@ -1,0 +1,77 @@
+name: MedRAG Academic Research CI
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  lint_and_validate:
+    name: Code Quality & Config Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Linting & Schema Tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pydantic pyyaml
+
+      - name: Run Ruff Linter
+        run: |
+          ruff check medrag/ tests/ eval.py
+
+      - name: Validate All Experiment Configuration Files
+        run: |
+          python -c "import glob; from medrag.benchmarks import ExperimentConfig; [ExperimentConfig.from_file(f) for f in glob.glob('configs/*.yaml')]; print('All YAML experiment configs verified.')"
+
+      - name: Verify Benchmark Adapter Registration
+        run: |
+          python eval.py --list-benchmarks
+
+  test:
+    name: Test Suite (Python ${{ matrix.python-version }})
+    needs: lint_and_validate
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    env:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      TOKENIZERS_PARALLELISM: "false"
+      KMP_DUPLICATE_LIB_OK: "TRUE"
+      MEDRAG_LLM_BACKEND: "mock"
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install Core & Dev Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install -r requirements-optional.txt
+
+      - name: Import Sanity Check
+        run: |
+          python -c "import medrag; from medrag.benchmarks import *; print('MedRAG package imported successfully.')"
+
+      - name: Run Unit & Benchmark Adapter Tests
+        run: |
+          python -m pytest tests/ -v

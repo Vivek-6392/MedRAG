@@ -43,7 +43,11 @@ class NLIVerifier:
         if self._model is None:
             print(f"  Loading NLI model: {self.model_name}")
             from sentence_transformers import CrossEncoder
-            self._model = CrossEncoder(self.model_name, num_labels=3)
+            try:
+                # Cache-first / offline-friendly loading to prevent network timeouts
+                self._model = CrossEncoder(self.model_name, num_labels=3, local_files_only=True)
+            except Exception:
+                self._model = CrossEncoder(self.model_name, num_labels=3)
 
     # ── NLI scoring ──────────────────────────────────────────────────────────
 
@@ -176,17 +180,21 @@ class NLIVerifier:
             temp_passages: List[Tuple[EvidencePassage, float, float, float]] = []
 
             for (p_text, doc), (ent, con, neu) in zip(all_doc_premises, c_scores):
+                q_score = getattr(doc, "quality_score", None)
+                is_default_q = q_score is None or not (0.0 <= float(q_score) <= 1.0)
+                final_q = float(q_score) if not is_default_q else 0.50
                 passage = EvidencePassage(
                     doc_id=doc.doc_id,
                     doc_title=doc.title,
                     source=doc.source,
                     year=doc.year,
-                    quality_score=doc.quality_score,
+                    quality_score=final_q,
                     text=p_text,
                     entailment=ent,
                     contradiction=con,
                     neutral=neu,
                     illustrative=bool(doc.metadata.get("illustrative", False)),
+                    is_default_quality=is_default_q,
                 )
                 temp_passages.append((passage, ent, con, neu))
 

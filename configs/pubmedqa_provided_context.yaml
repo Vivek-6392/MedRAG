@@ -1,0 +1,44 @@
+# ==============================================================================
+# MedRAG Experiment Configuration: PubMedQA Provided-Context Evaluation
+# Protocol: Evaluates reasoning and claim verification using benchmark abstract
+# ==============================================================================
+schema_version: "1.0.0"
+experiment_id: "pubmedqa_provided_context_eval"
+description: "PubMedQA PQA-L test evaluation with provided scientific abstracts (zero external retrieval)"
+benchmark_name: "pubmedqa"
+split: "test"
+protocol: "pubmedqa_provided_context"
+limit: null
+resume: true
+output_dir: "runs"
+
+# LLM Inference
+llm_backend: "groq"
+llm_model: "llama-3.3-70b-versatile"
+llm_temperature: 0.0
+llm_max_tokens: 1024
+
+# Evidence Verification
+nli_model: "cross-encoder/nli-MiniLM2-L6-H768"
+nli_batch_size: 16
+support_threshold: 0.70
+conflict_threshold: 0.35
+missing_threshold: 0.35
+clinical_confidence_threshold: 0.65
+
+# Controller
+max_search_rounds: 1
+high_risk_threshold: 0.75
+enable_abstention: true
+
+# Modular Components
+enable_hybrid: false
+enable_reranking: false
+enable_claim_decomposition: true
+enable_nli_verification: true
+enable_evidence_state: true
+enable_iterative: false
+enable_risk_policy: true
+enable_source_quality_weighting: false
+
+random_seed: 42

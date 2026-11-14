@@ -44,6 +44,17 @@ class MedRagConfig:
     high_risk_threshold: float = 0.75  # unresolved claims at/above this risk cannot be partial
     high_risk_penalty: float = 0.15    # retained for compatibility; risk policy is action-based
 
+    # ── Component Toggles for Baselines and Ablations ────────────────────────
+    enable_hybrid: bool = True
+    enable_reranking: bool = True
+    enable_claim_decomposition: bool = True
+    enable_nli_verification: bool = True
+    enable_evidence_state: bool = True
+    enable_iterative: bool = True
+    enable_risk_policy: bool = True
+    enable_abstention: bool = True
+    enable_source_quality_weighting: bool = True
+
     def __post_init__(self) -> None:
         self.validate()
 
@@ -78,44 +89,27 @@ class MedRagConfig:
 
         cfg = cls()
 
-        # 1. Determine Backend
-        backend = os.environ.get("LLM_BACKEND", "").strip().lower()
-        if backend:
-            cfg.llm_backend = backend
-        elif os.environ.get("GROQ_API_KEY") and not os.environ.get("OPENAI_API_KEY"):
-            cfg.llm_backend = "groq"
-        elif os.environ.get("OPENAI_API_KEY"):
-            cfg.llm_backend = "openai"
+        from medrag.provider import ProviderResolver
+        try:
+            resolved = ProviderResolver.resolve()
+            cfg.llm_backend = resolved.backend
+            cfg.llm_model = resolved.model
+            cfg.llm_api_key = resolved.api_key
+            cfg.llm_base_url = resolved.base_url
+        except Exception:
+            # Fallback for minimal test environments without keys
+            backend = os.environ.get("LLM_BACKEND", "").strip().lower()
+            if backend:
+                cfg.llm_backend = backend
+            if cfg.llm_backend == "groq":
+                cfg.llm_model = os.environ.get("GROQ_MODEL") or os.environ.get("LLM_MODEL") or DEFAULT_GROQ_MODEL
+                cfg.llm_api_key = os.environ.get("GROQ_API_KEY")
+                cfg.llm_base_url = os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+            elif cfg.llm_backend == "openai":
+                cfg.llm_model = os.environ.get("OPENAI_MODEL") or os.environ.get("LLM_MODEL") or "gpt-4o-mini"
+                cfg.llm_api_key = os.environ.get("OPENAI_API_KEY")
+                cfg.llm_base_url = os.environ.get("OPENAI_BASE_URL")
 
-        # 2. Configure Backend Credentials & Model from .env
-        if cfg.llm_backend == "groq":
-            cfg.llm_api_key = os.environ.get("GROQ_API_KEY")
-            cfg.llm_base_url = os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
-            cfg.llm_model = (
-                os.environ.get("GROQ_MODEL")
-                or os.environ.get("LLM_MODEL")
-                or os.environ.get("MODEL")
-                or DEFAULT_GROQ_MODEL
-            )
-        elif cfg.llm_backend == "openai":
-            cfg.llm_api_key = os.environ.get("OPENAI_API_KEY")
-            cfg.llm_base_url = os.environ.get("OPENAI_BASE_URL")
-            cfg.llm_model = (
-                os.environ.get("OPENAI_MODEL")
-                or os.environ.get("LLM_MODEL")
-                or os.environ.get("MODEL")
-            )
-        elif cfg.llm_backend == "ollama":
-            cfg.llm_base_url = os.environ.get("OLLAMA_BASE_URL") or os.environ.get("LLM_BASE_URL", "http://localhost:11434/v1")
-            cfg.llm_model = (
-                os.environ.get("OLLAMA_MODEL")
-                or os.environ.get("LLM_MODEL")
-                or os.environ.get("MODEL")
-            )
-        else:
-            cfg.llm_model = os.environ.get("LLM_MODEL") or os.environ.get("MODEL")
-
-        # 3. Global Overrides from .env
         if os.environ.get("LLM_MODEL"):
             cfg.llm_model = os.environ["LLM_MODEL"].strip()
         elif os.environ.get("MODEL"):
@@ -127,3 +121,18 @@ class MedRagConfig:
             cfg.llm_api_key = os.environ["LLM_API_KEY"].strip()
 
         return cfg
+
+    def resolve_for_backend(self, backend: str, model: Optional[str] = None) -> "MedRagConfig":
+        """Re-resolves provider credentials and endpoints for a specific backend."""
+        from medrag.provider import ProviderResolver
+        resolved = ProviderResolver.resolve(
+            requested_provider=backend,
+            model=model,
+            temperature=self.llm_temperature,
+            max_tokens=self.llm_max_tokens,
+        )
+        self.llm_backend = resolved.backend
+        self.llm_model = resolved.model
+        self.llm_api_key = resolved.api_key
+        self.llm_base_url = resolved.base_url
+        return self

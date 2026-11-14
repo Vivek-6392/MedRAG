@@ -1,0 +1,34 @@
+[
+  {
+    "protocol": "pubmedqa_provided_context",
+    "description": "Evidence directly supplied via expert-annotated PubMed context",
+    "sample_size": 2,
+    "accuracy": 0.0,
+    "accuracy_ci": [
+      0.0,
+      0.6576
+    ],
+    "coverage": 0.0,
+    "abstention_rate": 1.0,
+    "macro_f1": 0.0,
+    "mean_latency_s": 0.0,
+    "status": "Validated Smoke Suite",
+    "full_scale_target": "Pending Cloud GPU Run (N=500 PQA-L)"
+  },
+  {
+    "protocol": "pubmedqa_retrieval",
+    "description": "Full retrieval across 212k+ PubMed corpus without provided context",
+    "sample_size": 2,
+    "accuracy": 0.0,
+    "accuracy_ci": [
+      0.0,
+      0.6576
+    ],
+    "coverage": 0.0,
+    "abstention_rate": 1.0,
+    "macro_f1": 0.0,
+    "mean_latency_s": 0.44,
+    "status": "Validated Smoke Suite",
+    "full_scale_target": "Pending Cloud GPU Run (N=500 PQA-L)"
+  }
+]

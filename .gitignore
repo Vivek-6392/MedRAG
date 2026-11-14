@@ -1,45 +1,55 @@
-# Python
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-*.egg-info/
-dist/
+*$py.class
+*.so
+
+# Distribution / packaging
 build/
-*.egg
+dist/
+*.egg-info/
 .eggs/
 
-# Virtual envs
+# Virtual environments
 .venv/
 venv/
 env/
 ENV/
 
-# HuggingFace / model cache
+# Model checkpoints & local cache
 *.bin
 *.safetensors
-*.onnx
 *.pt
 *.pth
+*.onnx
+.cache/
+hf_cache/
 
-# Data (large files — add your own corpus separately)
-data/*.jsonl
+# Benchmark datasets & clinical textbooks (Do NOT commit copyrighted or benchmark data)
+data/medqa/
+data/pubmedqa/
+data/textbooks/
 data/*.json
+data/*.jsonl
+data/*.txt
+data/benchmarks/
+benchmarks/data/
 
-# IDE
+# Environment secrets and credentials
+.env
+*.key
+*.pem
+*.secret
+
+# Experiment runs and temporary outputs
+runs/
+outputs/
+results/
+*.log
+
+# IDE & OS files
 .vscode/
 .idea/
 *.swp
-
-# OS
 .DS_Store
 Thumbs.db
-
-# Secrets
-.env
-*.key
-
-# Logs / outputs
-*.log
-results/
-outputs/

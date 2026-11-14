@@ -1,0 +1,54 @@
+# ==============================================================================
+# MedRAG Experiment Configuration: Full Proposed System
+# Includes hybrid retrieval, cross-encoder reranker, claim extraction, NLI verifier,
+# evidence state conflict tracking, iterative search, and risk-aware stopping.
+# ==============================================================================
+schema_version: "1.0.0"
+experiment_id: "full_medrag_proposed"
+description: "Full MedRAG system with complete evidence verification and risk-aware stopping"
+benchmark_name: "medqa"
+split: "test"
+protocol: "full_medrag"
+limit: null
+resume: true
+output_dir: "runs/full_medrag"
+
+# LLM Inference
+llm_backend: "groq"
+llm_model: "llama-3.3-70b-versatile"
+llm_temperature: 0.0
+llm_max_tokens: 1024
+
+# Retrieval Settings
+top_k_retrieve: 20
+top_k_rerank: 5
+bm25_weight: 0.4
+dense_weight: 0.6
+dense_model: "sentence-transformers/all-MiniLM-L6-v2"
+use_reranker: true
+reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+# Evidence Verification
+nli_model: "cross-encoder/nli-MiniLM2-L6-H768"
+nli_batch_size: 16
+support_threshold: 0.70
+conflict_threshold: 0.35
+missing_threshold: 0.35
+clinical_confidence_threshold: 0.65
+
+# Controller
+max_search_rounds: 3
+high_risk_threshold: 0.75
+enable_abstention: true
+
+# Modular Components
+enable_hybrid: true
+enable_reranking: true
+enable_claim_decomposition: true
+enable_nli_verification: true
+enable_evidence_state: true
+enable_iterative: true
+enable_risk_policy: true
+enable_source_quality_weighting: true
+
+random_seed: 42

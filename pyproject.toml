@@ -1,0 +1,69 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "medrag"
+version = "0.2.0"
+description = "Reproducible, evidence-aware medical Retrieval-Augmented Generation research pipeline."
+readme = "README.md"
+authors = [
+    { name = "MedRAG Research Team" }
+]
+license = { text = "MIT" }
+requires-python = ">=3.10, <3.14"
+keywords = ["medical-nlp", "rag", "retrieval-augmented-generation", "nli", "clinical-ai"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "rank-bm25>=0.2.2",
+    "sentence-transformers>=2.7.0",
+    "numpy>=1.24.0",
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0.0,<3.0.0",
+    "pyyaml>=6.0.0",
+    "transformers>=4.40.0",
+    "torch>=2.0.0",
+    "tqdm>=4.66.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.4.0",
+]
+ui = [
+    "streamlit>=1.35.0",
+]
+plots = [
+    "matplotlib>=3.8.0",
+    "scipy>=1.11.0",
+]
+all = [
+    "medrag[dev,ui,plots]",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+asyncio_mode = "strict"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]
+
+[tool.ruff.lint]
+ignore = ["E402"]

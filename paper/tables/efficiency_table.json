@@ -1,0 +1,66 @@
+[
+  {
+    "configuration": "closed_book",
+    "mean_retrieval_rounds": 0.0,
+    "mean_latency_seconds": 0.0,
+    "estimated_prompt_tokens": 40,
+    "estimated_completion_tokens": 10,
+    "estimated_total_tokens": 50
+  },
+  {
+    "configuration": "single_pass_dense_rag",
+    "mean_retrieval_rounds": 1.0,
+    "mean_latency_seconds": 0.18,
+    "estimated_prompt_tokens": 125,
+    "estimated_completion_tokens": 10,
+    "estimated_total_tokens": 135
+  },
+  {
+    "configuration": "single_pass_bm25_rag",
+    "mean_retrieval_rounds": 1.0,
+    "mean_latency_seconds": 0.01,
+    "estimated_prompt_tokens": 125,
+    "estimated_completion_tokens": 10,
+    "estimated_total_tokens": 135
+  },
+  {
+    "configuration": "hybrid_rag",
+    "mean_retrieval_rounds": 1.0,
+    "mean_latency_seconds": 0.41,
+    "estimated_prompt_tokens": 125,
+    "estimated_completion_tokens": 10,
+    "estimated_total_tokens": 135
+  },
+  {
+    "configuration": "hybrid_reranked_rag",
+    "mean_retrieval_rounds": 1.0,
+    "mean_latency_seconds": 0.97,
+    "estimated_prompt_tokens": 125,
+    "estimated_completion_tokens": 10,
+    "estimated_total_tokens": 135
+  },
+  {
+    "configuration": "claim_verified_rag",
+    "mean_retrieval_rounds": 1.0,
+    "mean_latency_seconds": 13.68,
+    "estimated_prompt_tokens": 125,
+    "estimated_completion_tokens": 50,
+    "estimated_total_tokens": 175
+  },
+  {
+    "configuration": "iterative_rag",
+    "mean_retrieval_rounds": 3.0,
+    "mean_latency_seconds": 41.13,
+    "estimated_prompt_tokens": 215,
+    "estimated_completion_tokens": 10,
+    "estimated_total_tokens": 225
+  },
+  {
+    "configuration": "full_medrag",
+    "mean_retrieval_rounds": 3.0,
+    "mean_latency_seconds": 39.94,
+    "estimated_prompt_tokens": 215,
+    "estimated_completion_tokens": 50,
+    "estimated_total_tokens": 265
+  }
+]

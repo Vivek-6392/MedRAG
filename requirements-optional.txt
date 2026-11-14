@@ -1,0 +1,10 @@
+# ==============================================================================
+# MedRAG Optional Dependencies (Web UI, Advanced Plotting, Statistical Evals)
+# ==============================================================================
+
+# Interactive Streamlit Demo
+streamlit>=1.35.0
+
+# Scientific Graphics & Statistics (for generating 300 DPI publication plots)
+matplotlib>=3.8.0
+scipy>=1.11.0

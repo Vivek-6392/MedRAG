@@ -47,7 +47,7 @@ class PipelineResult:
         print(f"  Latency  : {self.latency_seconds:.1f}s")
         if self.evidence_state:
             s = self.evidence_state.summary_dict()
-            print(f"\n  Evidence State:")
+            print("\n  Evidence State:")
             print(f"    Claims     : {s['total_claims']} total | "
                   f"{s['supported']} supported | "
                   f"{s['conflicted']} conflicted | "
@@ -125,6 +125,7 @@ class MedRagPipeline:
         self.query_understander = ClinicalQueryUnderstanding(llm_client)
 
         # Phase 2
+        use_reranker = bool(config.use_reranker and getattr(config, "enable_reranking", True))
         self.retriever = HybridRetriever(
             dense_model=config.dense_model,
             reranker_model=config.reranker_model,
@@ -132,7 +133,7 @@ class MedRagPipeline:
             dense_weight=config.dense_weight,
             top_k_retrieve=config.top_k_retrieve,
             top_k_rerank=config.top_k_rerank,
-            use_reranker=config.use_reranker,
+            use_reranker=use_reranker,
         )
         self.retriever.index(documents)
 
@@ -165,7 +166,7 @@ class MedRagPipeline:
         history: List[Dict[str, Any]] = []
 
         # ── Phase 1: Clinical Query Understanding ────────────────────────────
-        print(f"[Phase 1] Clinical Query Understanding")
+        print("[Phase 1] Clinical Query Understanding")
         cq: ClinicalQuery = self.query_understander.parse(question)
         print(f"  intent={cq.intent}  risk={cq.clinical_risk:.2f}  entities={cq.entities[:4]}")
 
@@ -173,7 +174,7 @@ class MedRagPipeline:
         all_retrieved: List[RetrievedDocument] = []
         seen_doc_ids: set[str] = set()
 
-        max_rounds = int(self.config.max_search_rounds)
+        max_rounds = 1 if not getattr(self.config, "enable_iterative", True) else int(self.config.max_search_rounds)
         if max_rounds < 1:
             raise ValueError("max_search_rounds must be at least 1.")
         round_num = 1
@@ -189,7 +190,14 @@ class MedRagPipeline:
 
             # ── Phase 2: Evidence-Aware Retrieval ────────────────────────────
             print(f"\n[{label}] Evidence-Aware Retrieval  query={search_query!r:.70}")
-            new_hits = self.retriever.retrieve(search_query)
+            if not getattr(self.config, "enable_hybrid", True):
+                dense_retriever = getattr(self.retriever, "dense", None)
+                if self.config.dense_weight > 0 and dense_retriever is not None and getattr(dense_retriever, "_embeddings", None) is not None:
+                    new_hits = dense_retriever.retrieve(search_query, top_k=self.config.top_k_retrieve)
+                else:
+                    new_hits = self.retriever.bm25.retrieve(search_query, top_k=self.config.top_k_retrieve)
+            else:
+                new_hits = self.retriever.retrieve(search_query)
 
             # Deduplicate and accumulate evidence from all rounds
             new_added = 0
@@ -203,6 +211,33 @@ class MedRagPipeline:
 
             if not all_retrieved:
                 print("  [Warning] No documents retrieved.")
+                if not getattr(self.config, "enable_abstention", True):
+                    raw_ans = self.generator.llm.complete(question)
+                    decision = ControllerDecision(
+                        action=Action.STOP,
+                        reason="Zero retrieval but abstention disabled by ablation; emitted parametric generation.",
+                        confidence=0.5,
+                    )
+                    history.append({
+                        "round": round_num,
+                        "query": search_query,
+                        "new_docs": 0,
+                        "total_docs": 0,
+                        "n_claims": 0,
+                        "action": decision.action.value,
+                        "reason": decision.reason,
+                    })
+                    return PipelineResult(
+                        question=question,
+                        final_answer=raw_ans,
+                        action="STOP",
+                        evidence_state=None,
+                        rounds=rounds_run,
+                        retrieved_docs=[],
+                        clinical_query=cq,
+                        history=history,
+                        latency_seconds=time.time() - t0,
+                    )
                 decision = ControllerDecision(
                     action=Action.ABSTAIN,
                     reason="No relevant clinical documents were retrieved from the corpus.",
@@ -246,11 +281,33 @@ class MedRagPipeline:
                     })
                     break
 
-                stable_claims = initial_generated_answer.atomic_claims
-                print(f"  {len(stable_claims)} atomic claims extracted")
+                if not getattr(self.config, "enable_claim_decomposition", True):
+                    raw_clean = initial_generated_answer.answer.strip()
+                    first_stmt = raw_clean.split(".")[0].strip() if "." in raw_clean else raw_clean
+                    stable_claims = [first_stmt if len(first_stmt) > 15 else raw_clean[:200]]
+                    print("  [Ablation] Claim decomposition disabled; using single holistic statement")
+                else:
+                    stable_claims = initial_generated_answer.atomic_claims
+                    print(f"  {len(stable_claims)} atomic claims extracted")
 
                 if not stable_claims:
                     print("  [Warning] No atomic claims extracted.")
+                    if not getattr(self.config, "enable_abstention", True):
+                        decision = ControllerDecision(
+                            action=Action.STOP,
+                            reason="No claims extracted but abstention disabled by ablation; emitted unverified answer.",
+                            confidence=0.5,
+                        )
+                        history.append({
+                            "round": round_num,
+                            "query": search_query,
+                            "new_docs": new_added,
+                            "total_docs": len(all_retrieved),
+                            "n_claims": 0,
+                            "action": decision.action.value,
+                            "reason": decision.reason,
+                        })
+                        break
                     decision = ControllerDecision(
                         action=Action.ABSTAIN,
                         reason="No atomic clinical claims could be extracted for verification.",
@@ -270,18 +327,63 @@ class MedRagPipeline:
             # ── Phase 4+5: Claim Verification against ALL Accumulated Evidence ──
             # Fix: Verifies against all accumulated documents, not truncated top_k_rerank
             print(f"[{label}] Verifying claims against {len(all_retrieved)} accumulated documents...")
-            state: EvidenceState = self.verifier.verify_claims(
-                claims=stable_claims,
-                retrieved_docs=all_retrieved,
-                clinical_risk=cq.clinical_risk,
-                support_threshold=self.config.support_threshold,
-                conflict_threshold=self.config.conflict_threshold,
-                missing_threshold=getattr(self.config, "missing_threshold", 0.35),
-                round_number=round_num,
-                clinical_confidence_threshold=getattr(
-                    self.config, "clinical_confidence_threshold", 0.65
-                ),
-            )
+            if not getattr(self.config, "enable_nli_verification", True):
+                print("  [Ablation] NLI verification disabled; approximating support from retrieval ranking...")
+                from .evidence_state import EvidenceState, ClaimEvidence, EvidencePassage
+                top_score = all_retrieved[0].score if all_retrieved else 0.5
+                norm_score = min(1.0, max(0.0, top_score if top_score <= 1.0 else top_score / 10.0))
+                claim_evs = []
+                for c in stable_claims:
+                    claim_evs.append(ClaimEvidence(
+                        claim=c,
+                        support_score=norm_score,
+                        conflict_score=0.0,
+                        supporting_passages=[
+                            EvidencePassage(
+                                doc_id=d.document.doc_id,
+                                doc_title=d.document.title,
+                                source=d.document.source,
+                                year=d.document.year,
+                                quality_score=1.0 if not getattr(self.config, "enable_source_quality_weighting", True) else d.document.quality_score,
+                                text=d.document.text[:300],
+                                entailment=norm_score,
+                                contradiction=0.0,
+                                neutral=1.0 - norm_score,
+                            )
+                            for d in all_retrieved[:3]
+                        ],
+                    ))
+                state = EvidenceState(claim_evidences=claim_evs, round_number=round_num)
+            else:
+                state: EvidenceState = self.verifier.verify_claims(
+                    claims=stable_claims,
+                    retrieved_docs=all_retrieved,
+                    clinical_risk=cq.clinical_risk if getattr(self.config, "enable_risk_policy", True) else 0.0,
+                    support_threshold=self.config.support_threshold,
+                    conflict_threshold=self.config.conflict_threshold,
+                    missing_threshold=getattr(self.config, "missing_threshold", 0.35),
+                    round_number=round_num,
+                    clinical_confidence_threshold=getattr(
+                        self.config, "clinical_confidence_threshold", 0.65
+                    ),
+                )
+
+            # Apply ablation: without source quality weighting
+            if not getattr(self.config, "enable_source_quality_weighting", True):
+                for ce in state.claim_evidences:
+                    ce.quality_weight = 0.0
+                    ce.annual_recency_decay = 0.0
+                    for p in ce.supporting_passages + getattr(ce, "contradicting_passages", []):
+                        p.quality_score = 1.0
+                        p.year = 2024
+
+            # Apply ablation: without evidence state tracking
+            if not getattr(self.config, "enable_evidence_state", True):
+                for ce in state.claim_evidences:
+                    ce.conflict_penalty_weight = 0.0
+                    ce.quality_weight = 0.0
+                    ce.annual_recency_decay = 0.0
+
             final_state = state
 
             s = state.summary_dict()
@@ -300,6 +402,15 @@ class MedRagPipeline:
                 current_round=round_num,
                 max_rounds=max_rounds,
             )
+
+            # Apply ablation: without abstention (force answering)
+            if not getattr(self.config, "enable_abstention", True):
+                if decision.action == Action.ABSTAIN:
+                    decision = ControllerDecision(
+                        action=Action.STOP,
+                        reason="Abstention disabled by ablation study; forced to emit best candidate answer.",
+                        confidence=state.mean_confidence if state else 0.5,
+                    )
             print(f"  -> {decision.action}  {decision.reason}")
 
             history.append({
@@ -343,6 +454,7 @@ class MedRagPipeline:
             state=final_state,
             decision=decision,
             retrieved_docs=all_retrieved,
+            candidate_answer=initial_generated_answer.answer if initial_generated_answer else "",
         )
 
         return PipelineResult(
@@ -365,7 +477,14 @@ class MedRagPipeline:
         state: Optional[EvidenceState],
         decision: Optional[ControllerDecision],
         retrieved_docs: List[RetrievedDocument],
+        candidate_answer: str = "",
     ) -> str:
+        # If abstention is disabled by ablation, return candidate answer if system would otherwise abstain
+        if not getattr(self.config, "enable_abstention", True):
+            if not decision or not state or decision.action in (Action.ABSTAIN, Action.PARTIAL, Action.CONFLICTED):
+                if candidate_answer:
+                    return candidate_answer
+
         if not decision or not state:
             reason = decision.reason if decision else "No controller decision was produced."
             return (
@@ -377,12 +496,15 @@ class MedRagPipeline:
         act = decision.action
 
         if act in (Action.STOP, Action.VERIFIED):
-            lines = [
+            lines = []
+            if candidate_answer:
+                lines.append(f"{candidate_answer}\n")
+            lines.extend([
                 "**Evidence-supported findings:**",
                 f"**Question:** {question}",
                 f"All generated claims met the configured support criteria across "
                 f"{len(retrieved_docs)} retrieved document(s).",
-            ]
+            ])
             for i, c in enumerate(state.claim_evidences):
                 lines.append(f"- **Claim {i + 1}:** {c.claim}")
                 if c.supporting_passages:
@@ -468,7 +590,7 @@ class MedRagPipeline:
         reason = decision.reason if decision else "Insufficient evidence."
         lines = [
             "🛑 **MedRAG Abstained from Clinical Recommendation**\n",
-            f"**Clinical Decision:** ABSTAIN\n",
+            "**Clinical Decision:** ABSTAIN\n",
             f"**Reason:** {reason}\n\n",
             "The retrieved evidence does not meet the necessary clinical certainty threshold to ensure patient safety.",
         ]

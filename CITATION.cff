@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use MedRAG in your research, please cite it using the metadata below."
+title: "MedRAG: Evidence-Aware Medical Retrieval-Augmented Generation with Claim-Level Verification and Risk-Aware Abstention"
+version: 0.2.0
+date-released: 2026-11-14
+url: "https://github.com/Vivek-6392/MedRAG"
+repository-code: "https://github.com/Vivek-6392/MedRAG"
+license: MIT
+keywords:
+  - "medical-nlp"
+  - "retrieval-augmented-generation"
+  - "natural-language-inference"
+  - "claim-verification"
+  - "selective-prediction"
+  - "reproducible-benchmarks"
+authors:
+  - family-names: "Research Team"
+    given-names: "MedRAG"
+    affiliation: "Medical AI Research"
+preferred-citation:
+  type: article
+  title: "MedRAG: Evidence-Aware Medical Retrieval-Augmented Generation with Claim-Level Verification and Risk-Aware Abstention"
+  authors:
+    - family-names: "Research Team"
+      given-names: "MedRAG"
+  journal: "arXiv preprint"
+  year: 2026
+  url: "https://github.com/Vivek-6392/MedRAG"

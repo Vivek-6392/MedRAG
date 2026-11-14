@@ -140,6 +140,8 @@ class ClinicalQueryUnderstanding:
         )
 
     def _heuristic_parse(self, question: str) -> ClinicalQuery:
+        from .risk_policy import ClinicalRiskPolicy
+
         q = question.lower()
 
         # Intent
@@ -149,12 +151,9 @@ class ClinicalQueryUnderstanding:
                 intent = name
                 break
 
-        # Risk
-        critical = any(t in q for t in self.CRITICAL_RISK_TERMS)
-        high_risk = any(t in q for t in self.HIGH_RISK_TERMS)
-        risk = 1.0 if critical else 0.8 if high_risk else 0.3
-        if intent in ("dosage", "safety"):
-            risk = max(risk, 0.6)
+        # Risk via ClinicalRiskPolicy
+        assessment = ClinicalRiskPolicy.assess_query(question, intent=intent)
+        risk = assessment.score
 
         # Entities — capitalised noun phrases
         entities = [

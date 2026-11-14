@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 
 # Configure UTF-8 stdout/stderr on Windows to prevent charmap encoding errors
@@ -225,31 +224,17 @@ def _build_sample_corpus():
 
 
 def load_corpus_file(path: str):
-    from medrag import Document
-    docs = []
+    from medrag.document_validator import validate_corpus
     if path.endswith(".jsonl"):
         with open(path, encoding="utf-8") as f:
             lines = f.readlines()
-        items = [json.loads(l) for l in lines if l.strip()]
+        items = [json.loads(line_str) for line_str in lines if line_str.strip()]
     else:
         with open(path, encoding="utf-8") as f:
             items = json.load(f)
     if not isinstance(items, list):
         items = [items]
-    for i, d in enumerate(items):
-        metadata = d.get("metadata", {})
-        if not isinstance(metadata, dict):
-            raise ValueError(f"Corpus document {i} metadata must be a JSON object.")
-        docs.append(Document(
-            doc_id=str(d.get("id", i)),
-            title=d.get("title", ""),
-            text=d.get("text", d.get("abstract", d.get("content", ""))),
-            source=d.get("source", d.get("journal", "")),
-            year=int(d.get("year", d.get("pub_year", 2020))),
-            quality_score=float(d.get("quality_score", 0.5)),
-            metadata=metadata,
-        ))
-    return docs
+    return validate_corpus(items)
 
 
 # ── Demo questions ────────────────────────────────────────────────────────────
@@ -305,40 +290,26 @@ def main() -> None:
 
     # ── LLM backend ───────────────────────────────────────────────────────────
     from medrag import LLMClient
-    backend = args.backend if args.backend != "auto" else config.llm_backend
+    from medrag.provider import ProviderResolver
 
-    # Use model name from .env only
-    model = (
-        getattr(config, "llm_model", None)
-        or os.environ.get("LLM_MODEL")
-        or (os.environ.get("GROQ_MODEL") if backend == "groq" else None)
-        or (os.environ.get("OPENAI_MODEL") if backend == "openai" else None)
-        or os.environ.get("MODEL")
+    resolved = ProviderResolver.resolve(
+        requested_provider=args.backend,
+        model=args.model,
+        api_key=args.api_key,
+        base_url=args.base_url,
     )
+    print(f"[LLM] Backend: {resolved.backend} | Model: {resolved.model} ({resolved.selection_reason})")
 
-    api_key = args.api_key or getattr(config, "llm_api_key", None)
-    base_url = args.base_url or getattr(config, "llm_base_url", None)
-
-    if backend == "auto":
-        if os.environ.get("GROQ_API_KEY"):
-            backend = "groq"
-            api_key = api_key or os.environ.get("GROQ_API_KEY")
-            base_url = base_url or os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
-        elif os.environ.get("OPENAI_API_KEY"):
-            backend = "openai"
-            api_key = api_key or os.environ.get("OPENAI_API_KEY")
-        else:
-            backend = "mock"
-            print("[Info] No LLM API key found — using mock backend (for testing).")
-            print("[Info] Set GROQ_API_KEY or OPENAI_API_KEY in .env for real answers.\n")
-
-    print(f"[LLM] Backend: {backend} | Model: {model}")
+    config.llm_backend = resolved.backend
+    config.llm_model = resolved.model
+    config.llm_api_key = resolved.api_key
+    config.llm_base_url = resolved.base_url
 
     llm = LLMClient(
-        backend=backend,
-        model=model,
-        api_key=api_key,
-        base_url=base_url,
+        backend=resolved.backend,
+        model=resolved.model,
+        api_key=resolved.api_key,
+        base_url=resolved.base_url,
     )
 
     # ── Corpus ────────────────────────────────────────────────────────────────

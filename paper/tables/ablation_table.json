@@ -1,0 +1,83 @@
+[
+  {
+    "configuration": "ablation_no_abstention",
+    "accuracy": 1.0,
+    "delta_accuracy": 0.0,
+    "ci_lower": 0.0,
+    "ci_upper": 0.0,
+    "mcnemar_p_value": 1.0,
+    "is_significant": false
+  },
+  {
+    "configuration": "ablation_no_claim_decomposition",
+    "accuracy": 1.0,
+    "delta_accuracy": 0.0,
+    "ci_lower": 0.0,
+    "ci_upper": 0.0,
+    "mcnemar_p_value": 1.0,
+    "is_significant": false
+  },
+  {
+    "configuration": "ablation_no_evidence_state",
+    "accuracy": 1.0,
+    "delta_accuracy": 0.0,
+    "ci_lower": 0.0,
+    "ci_upper": 0.0,
+    "mcnemar_p_value": 1.0,
+    "is_significant": false
+  },
+  {
+    "configuration": "ablation_no_hybrid",
+    "accuracy": 1.0,
+    "delta_accuracy": 0.0,
+    "ci_lower": 0.0,
+    "ci_upper": 0.0,
+    "mcnemar_p_value": 1.0,
+    "is_significant": false
+  },
+  {
+    "configuration": "ablation_no_iterative",
+    "accuracy": 1.0,
+    "delta_accuracy": 0.0,
+    "ci_lower": 0.0,
+    "ci_upper": 0.0,
+    "mcnemar_p_value": 1.0,
+    "is_significant": false
+  },
+  {
+    "configuration": "ablation_no_nli_verification",
+    "accuracy": 0.0,
+    "delta_accuracy": -1.0,
+    "ci_lower": 1.0,
+    "ci_upper": 1.0,
+    "mcnemar_p_value": 0.5,
+    "is_significant": false
+  },
+  {
+    "configuration": "ablation_no_reranking",
+    "accuracy": 1.0,
+    "delta_accuracy": 0.0,
+    "ci_lower": 0.0,
+    "ci_upper": 0.0,
+    "mcnemar_p_value": 1.0,
+    "is_significant": false
+  },
+  {
+    "configuration": "ablation_no_risk_policy",
+    "accuracy": 1.0,
+    "delta_accuracy": 0.0,
+    "ci_lower": 0.0,
+    "ci_upper": 0.0,
+    "mcnemar_p_value": 1.0,
+    "is_significant": false
+  },
+  {
+    "configuration": "ablation_no_source_quality",
+    "accuracy": 1.0,
+    "delta_accuracy": 0.0,
+    "ci_lower": 0.0,
+    "ci_upper": 0.0,
+    "mcnemar_p_value": 1.0,
+    "is_significant": false
+  }
+]
