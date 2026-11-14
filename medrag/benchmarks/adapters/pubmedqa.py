@@ -133,6 +133,23 @@ class PubMedQAAdapter(DatasetAdapter):
             with open(target_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
+            # If target_path is ori_pqal.json, filter by test_ground_truth.json if present
+            gt_path = os.path.join(os.path.dirname(target_path), "test_ground_truth.json")
+            if "ori_pqal" in os.path.basename(target_path) and os.path.exists(gt_path) and isinstance(data, dict):
+                with open(gt_path, "r", encoding="utf-8") as f_gt:
+                    gt_map = json.load(f_gt)
+                test_pmids = set(gt_map.keys())
+                if canonical_split == "test":
+                    data = {k: v for k, v in data.items() if k in test_pmids}
+                elif canonical_split in ("dev", "val"):
+                    remaining = sorted([k for k in data.keys() if k not in test_pmids])
+                    dev_pmids = set(remaining[:100])
+                    data = {k: v for k, v in data.items() if k in dev_pmids}
+                elif canonical_split == "train":
+                    remaining = sorted([k for k in data.keys() if k not in test_pmids])
+                    train_pmids = set(remaining[100:])
+                    data = {k: v for k, v in data.items() if k in train_pmids}
+
             # Support dict format {pmid: {QUESTION, CONTEXTS, final_decision}}
             if isinstance(data, dict):
                 items = [{"pmid": k, **v} if isinstance(v, dict) else {"pmid": k, "final_decision": v} for k, v in data.items()]
@@ -169,22 +186,38 @@ class PubMedQAAdapter(DatasetAdapter):
     def _resolve_split_path(self, split: str) -> Optional[str]:
         """Resolves target file path for official splits."""
         env_dir = os.environ.get("PUBMEDQA_DATA_DIR")
-        candidate_paths = [
-            self.data_path,
-            os.path.join(env_dir, f"{split}.json") if env_dir else None,
-            os.path.join(env_dir, f"{split}_set.json") if env_dir else None,
-            os.path.join(env_dir, "ori_pqal.json") if env_dir else None,
-            os.path.join(env_dir, "pqa_labeled.json") if env_dir else None,
-            os.path.join(env_dir, "test_ground_truth.json") if (env_dir and split == "test") else None,
-            os.path.join("data", "pubmedqa", f"{split}.json"),
-            os.path.join("data", "pubmedqa", f"{split}_set.json"),
-            os.path.join("data", "pubmedqa", "ori_pqal.json"),
-            os.path.join("data", "pubmedqa", "pqa_labeled.json"),
-            os.path.join("data", "pubmedqa", "test_ground_truth.json") if split == "test" else None,
+        dirs_to_check = []
+        if self.data_path:
+            if os.path.isfile(self.data_path):
+                return self.data_path
+            dirs_to_check.append(self.data_path)
+        if env_dir:
+            if os.path.isfile(env_dir):
+                return env_dir
+            dirs_to_check.append(env_dir)
+        dirs_to_check.extend([
+            os.path.join("data", "pubmedqa"),
+            os.path.expanduser(os.path.join("~", ".medrag", "data", "pubmedqa")),
+        ])
+
+        candidate_filenames = [
+            f"{split}.json",
+            f"{split}_set.json",
+            "ori_pqal.json",
+            os.path.join("data", f"{split}.json"),
+            os.path.join("data", f"{split}_set.json"),
+            os.path.join("data", "ori_pqal.json"),
+            os.path.join("pubmedqa-master", "data", f"{split}.json"),
+            os.path.join("pubmedqa-master", "data", "ori_pqal.json"),
         ]
-        for p in candidate_paths:
-            if p and os.path.exists(p):
-                return p
+
+        for base_dir in dirs_to_check:
+            if not base_dir:
+                continue
+            for fname in candidate_filenames:
+                p = os.path.join(base_dir, fname)
+                if os.path.isfile(p):
+                    return p
         return None
 
     def normalize_example(self, raw_item: Dict[str, Any], split: str) -> BenchmarkExample:
