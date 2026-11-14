@@ -12,6 +12,13 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# Load local environment variables (.env) if present
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 # Environment safety & offline resilience
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 hf_cache = Path.home() / ".cache" / "huggingface" / "hub"
@@ -250,8 +257,16 @@ def main() -> int:
         split = args.split
         limit = args.limit
         protocol = args.protocol
-        backend = args.backend or ("mock" if not os.environ.get("OPENAI_API_KEY") and not os.environ.get("GROQ_API_KEY") else "groq")
-        model = args.model or ("mock-clinical-llm" if backend == "mock" else "llama-3.3-70b-versatile")
+        from medrag.provider import ProviderResolver
+        req_p = args.backend or ("mock" if not os.environ.get("OPENAI_API_KEY") and not os.environ.get("GROQ_API_KEY") else "auto")
+        try:
+            resolved_p = ProviderResolver.resolve(requested_provider=req_p, model=args.model)
+            backend = resolved_p.backend
+            model = resolved_p.model
+        except Exception as e:
+            logger.warning(f"Provider resolution warning: {e}; falling back to defaults")
+            backend = args.backend or "mock"
+            model = args.model or ("mock-clinical-llm" if backend == "mock" else "openai/gpt-oss-120b")
         exp_id = args.experiment_id or f"{dataset}_{protocol}_{split}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     # Handle textbook corpus preparation if requested

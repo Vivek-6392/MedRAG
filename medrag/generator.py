@@ -73,6 +73,22 @@ class LLMClient:
         self.call_failed: bool = False
         self.last_error: Optional[str] = None
 
+        if self.backend != "mock" and (not self.api_key or not self.base_url):
+            try:
+                from .provider import ProviderResolver
+                resolved = ProviderResolver.resolve(
+                    requested_provider=self.backend,
+                    model=self.model,
+                    api_key=self.api_key,
+                    base_url=self.base_url,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                )
+                self.api_key = self.api_key or resolved.api_key
+                self.base_url = self.base_url or resolved.base_url
+            except Exception:
+                pass
+
     def _get_client(self):
         if self._client is None and self.backend != "mock":
             from openai import OpenAI
@@ -91,49 +107,56 @@ class LLMClient:
         if self.backend == "mock":
             return self._mock_complete(prompt)
 
-        try:
-            client = self._get_client()
-            if client is None:
-                raise RuntimeError("LLM client could not be initialized.")
-            request_args = {
-                "model": self.model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": self.temperature,
-            }
-            token_limit = max_tokens or self.max_tokens
-            if self.backend == "groq" and self.model.startswith("openai/gpt-oss-"):
-                request_args.update(
-                    max_completion_tokens=max(token_limit, 4096),
-                    reasoning_effort="low",
-                )
-            else:
-                request_args["max_tokens"] = token_limit
+        import time
+        retries = 3
+        for attempt in range(retries):
+            try:
+                client = self._get_client()
+                if client is None:
+                    raise RuntimeError("LLM client could not be initialized.")
+                request_args = {
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": self.temperature,
+                }
+                token_limit = max_tokens or self.max_tokens
+                if self.backend == "groq" and self.model.startswith("openai/gpt-oss-"):
+                    request_args.update(
+                        max_completion_tokens=max(token_limit, 4096),
+                        reasoning_effort="low",
+                    )
+                else:
+                    request_args["max_tokens"] = token_limit
 
-            response = client.chat.completions.create(**request_args)
-            choices = getattr(response, "choices", None)
-            if not choices:
-                raise ValueError("LLM returned no completion choices.")
+                response = client.chat.completions.create(**request_args)
+                choices = getattr(response, "choices", None)
+                if not choices:
+                    raise ValueError("LLM returned no completion choices.")
 
-            choice = choices[0]
-            message = getattr(choice, "message", None)
-            content = getattr(message, "content", None)
-            if not isinstance(content, str) or not content.strip():
-                finish_reason = getattr(choice, "finish_reason", None)
-                usage = getattr(response, "usage", None)
-                completion_tokens = getattr(usage, "completion_tokens", None)
-                details = []
-                if finish_reason:
-                    details.append(f"finish_reason={finish_reason!r}")
-                if completion_tokens is not None:
-                    details.append(f"completion_tokens={completion_tokens}")
-                suffix = f" ({', '.join(details)})" if details else ""
-                raise ValueError(f"LLM returned no text content{suffix}.")
-            return content
-        except Exception as e:
-            self.call_failed = True
-            self.last_error = f"{type(e).__name__}: {str(e)}"
-            print(f"[Warning] LLM API call failed ({self.backend} / {self.model}): {e}")
-            return ""
+                choice = choices[0]
+                message = getattr(choice, "message", None)
+                content = getattr(message, "content", None)
+                if not isinstance(content, str) or not content.strip():
+                    finish_reason = getattr(choice, "finish_reason", None)
+                    usage = getattr(response, "usage", None)
+                    completion_tokens = getattr(usage, "completion_tokens", None)
+                    details = []
+                    if finish_reason:
+                        details.append(f"finish_reason={finish_reason!r}")
+                    if completion_tokens is not None:
+                        details.append(f"completion_tokens={completion_tokens}")
+                    suffix = f" ({', '.join(details)})" if details else ""
+                    raise ValueError(f"LLM returned no text content{suffix}.")
+                return content
+            except Exception as e:
+                err_str = str(e)
+                if ("429" in err_str or "rate_limit" in err_str.lower()) and attempt < retries - 1:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                self.call_failed = True
+                self.last_error = f"{type(e).__name__}: {str(e)}"
+                print(f"[Warning] LLM API call failed ({self.backend} / {self.model}): {e}")
+                return ""
 
     # ── Context-aware mock backend for testing/offline ───────────────────────
 

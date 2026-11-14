@@ -474,7 +474,7 @@ class PubMedQAAdapter(DatasetAdapter):
                             title=f"PubMed Abstract {ex.example_id}",
                             text=passage.strip(),
                             source="PubMed Central",
-                            year=int(ex.metadata.get("year", 2024)),
+                            year=int(ex.metadata.get("year") or 2024),
                             quality_score=0.90,
                         )
                     )

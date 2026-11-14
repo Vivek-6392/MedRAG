@@ -118,6 +118,10 @@ class EvaluationRunner:
                 max_tokens=config.llm_max_tokens,
             )
             medrag_cfg = config.to_medrag_config()
+            if hasattr(llm, "api_key") and llm.api_key:
+                medrag_cfg.llm_api_key = llm.api_key
+            if hasattr(llm, "base_url") and llm.base_url:
+                medrag_cfg.llm_base_url = llm.base_url
             if protocol_clean in ("closed_book", "closed-book"):
                 medrag_cfg.use_reranker = False
             self.pipeline = MedRagPipeline(
@@ -544,7 +548,7 @@ class EvaluationRunner:
                     title=f"PubMed Abstract {example.example_id}",
                     text=passage.strip(),
                     source="PubMed Central",
-                    year=int(example.metadata.get("year", 2024)),
+                    year=int(example.metadata.get("year") or 2024),
                     quality_score=0.90,
                 ))
 
