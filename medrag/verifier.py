@@ -12,6 +12,7 @@ import numpy as np
 
 from .retriever import Document, RetrievedDocument
 from .evidence_state import ClaimEvidence, EvidencePassage, EvidenceState
+from .generator import _extract_specific_keywords
 
 
 class NLIVerifier:
@@ -202,11 +203,19 @@ class NLIVerifier:
             contradicting_passages: List[EvidencePassage] = []
             neutral_passages: List[EvidencePassage] = []
 
+            claim_kw = set(_extract_specific_keywords(claim))
             for passage, ent, con, neu in temp_passages:
                 # Apply the same configured thresholds used for claim status.
                 is_supporting = ent >= support_threshold
+
+                # A passage only contradicts if it shares topical relevance/entity with the claim
+                has_overlap = True
+                if claim_kw:
+                    p_tokens = set(re.findall(r"\b[a-zA-Z0-9-]{3,}\b", passage.text.lower()))
+                    has_overlap = bool(claim_kw & p_tokens)
+
                 is_contradicting = (
-                    con >= conflict_threshold and con > ent and con > neu
+                    has_overlap and con >= conflict_threshold and con > ent and con > neu
                 )
                 if is_supporting:
                     supporting_passages.append(passage)

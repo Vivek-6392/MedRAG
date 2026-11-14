@@ -139,6 +139,31 @@ def get_sample_corpus():
     return _build_sample_corpus()
 
 
+@st.cache_resource
+def get_pubmedqa_corpus(data_path: str = "ori_pqal.json", limit: int = 1000):
+    """Loads peer-reviewed PubMed Central research abstract passages from ori_pqal.json."""
+    from medrag.benchmarks.adapters.pubmedqa import PubMedQAAdapter
+    if not os.path.exists(data_path):
+        return []
+    adapter = PubMedQAAdapter(data_path=data_path)
+    docs = adapter.get_default_corpus()
+    return docs[:limit] if docs else []
+
+
+@st.cache_resource
+def get_medqa_textbook_corpus(book_filename: str = "First_Aid_Step1.txt", max_chunks: int = 500):
+    """Extracts, cleans, and chunks official MedQA medical textbooks with provenance metadata."""
+    from medrag.benchmarks.corpus_preparer import TextbookCorpusPreparer
+    p = TextbookCorpusPreparer(chunk_size=800, chunk_overlap=150)
+    path = os.path.join("data_clean", "textbooks", "en", book_filename)
+    if not os.path.exists(path):
+        return []
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    title = book_filename.replace(".txt", "").replace("_", " ")
+    return p.chunk_textbook(text, book_title=title, source_filename=book_filename)[:max_chunks]
+
+
 def get_active_config() -> MedRagConfig:
     return MedRagConfig.from_env()
 
@@ -224,7 +249,19 @@ with st.sidebar:
     st.divider()
 
     st.subheader("3. Knowledge Base")
-    corpus_choice = st.radio("Corpus Source", ["Built-in Clinical Corpus (15 docs)", "Upload Custom JSON/JSONL"])
+    has_pubmed = os.path.exists("ori_pqal.json")
+    has_medqa = os.path.exists(os.path.join("data_clean", "textbooks", "en"))
+
+    corpus_options = []
+    if has_pubmed:
+        corpus_options.append("PubMedQA Real Research Abstracts (ori_pqal.json)")
+    if has_medqa:
+        corpus_options.append("MedQA Textbook: First Aid Step 1")
+        corpus_options.append("MedQA Textbook: Pathoma Pathology")
+        corpus_options.append("MedQA Textbook: Pharmacology (Katzung)")
+    corpus_options.extend(["Built-in Sample Corpus (15 docs)", "Upload Custom JSON/JSONL"])
+
+    corpus_choice = st.radio("Corpus Source", corpus_options, index=0)
     uploaded_file = None
     if corpus_choice == "Upload Custom JSON/JSONL":
         uploaded_file = st.file_uploader("Upload corpus file", type=["json", "jsonl"])
@@ -236,8 +273,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ── Quick Example Questions ───────────────────────────────────────────────────
-st.markdown("**Example Clinical Questions:**")
+# ── Quick Example & Benchmark Questions ───────────────────────────────────────
+st.markdown("**Sample Inquiries & Real Benchmark Questions:**")
 examples = [
     ("Metformin and kidney function", "Is metformin safe for patients with renal impairment?"),
     (
@@ -253,11 +290,54 @@ examples = [
         "Can SGLT2 inhibitors be prescribed in patients with chronic kidney disease?",
     ),
 ]
+tab_practice, tab_pubmedqa, tab_medqa = st.tabs([
+    "🩺 Practice Cases",
+    "🔬 Real PubMedQA Research Inquiries",
+    "📚 Real MedQA USMLE Board Inquiries",
+])
 
-cols = st.columns(2)
-for i, (label, question) in enumerate(examples):
-    if cols[i % 2].button(label, key=f"ex_{i}", use_container_width=True):
-        st.session_state["main_query_input"] = question
+with tab_practice:
+    cols = st.columns(2)
+    for i, (label, question) in enumerate(examples):
+        if cols[i % 2].button(label, key=f"ex_{i}", use_container_width=True):
+            st.session_state["main_query_input"] = question
+
+with tab_pubmedqa:
+    if has_pubmed:
+        pqa_samples = [
+            ("Mitochondria in plant cell death (Gold: yes)", "Do mitochondria play a role in remodelling lace plant leaves during programmed cell death?"),
+            ("Postoperative cognitive dysfunction (Gold: no)", "Does postoperative cognitive dysfunction predict one-year mortality in elderly patients?"),
+            ("Intraoperative MRI in glioma surgery (Gold: yes)", "Does intraoperative MRI improve extent of resection in glioblastoma surgery?"),
+            ("Preoperative statins and AKI (Gold: maybe)", "Do preoperative statins prevent acute kidney injury after cardiac surgery?"),
+        ]
+        p_cols = st.columns(2)
+        for i, (label, q_text) in enumerate(pqa_samples):
+            if p_cols[i % 2].button(label, key=f"pqa_{i}", use_container_width=True):
+                st.session_state["main_query_input"] = q_text
+    else:
+        st.info("Place ori_pqal.json in the project root to enable PubMedQA inquiries.")
+
+with tab_medqa:
+    if has_medqa:
+        medqa_samples = [
+            (
+                "Carpal tunnel median nerve laceration (USMLE)",
+                "A junior orthopaedic surgery resident is completing a carpal tunnel repair with the department chairman as the attending surgeon. During closure of the skin incision, the resident accidentally lacerates the palmar cutaneous branch of the median nerve. Which sensory deficit will the patient experience?",
+            ),
+            (
+                "Methotrexate toxicity acute rescue (USMLE)",
+                "A 45-year-old female with rheumatoid arthritis on chronic methotrexate therapy presents with stomatitis, nausea, and pancytopenia. What agent should be administered immediately to rescue methotrexate toxicity?",
+            ),
+            (
+                "Exertional heat stroke emergency management (USMLE)",
+                "A 24-year-old male marathon runner collapses during hot weather. Rectal temperature is 40.8 C (105.4 F). He is delirious and sweating has ceased. What is the most critical immediate intervention?",
+            ),
+        ]
+        for i, (label, q_text) in enumerate(medqa_samples):
+            if st.button(label, key=f"medqa_{i}", use_container_width=True):
+                st.session_state["main_query_input"] = q_text
+    else:
+        st.info("Place data_clean in the project root to enable MedQA USMLE inquiries.")
 
 # Query Input
 user_question = st.text_input(
@@ -294,6 +374,26 @@ if run_clicked:
         except Exception as e:
             st.error(f"Error validating uploaded corpus: {e}")
             st.stop()
+    elif corpus_choice == "PubMedQA Real Research Abstracts (ori_pqal.json)":
+        with st.spinner("Loading verified PubMed Central scientific corpus from ori_pqal.json..."):
+            documents = get_pubmedqa_corpus()
+            if not documents:
+                st.error("Failed to load PubMedQA corpus from ori_pqal.json.")
+                st.stop()
+            st.toast(f"Loaded {len(documents)} real PubMed research articles.", icon="🔬")
+    elif corpus_choice.startswith("MedQA Textbook:"):
+        book_map = {
+            "MedQA Textbook: First Aid Step 1": "First_Aid_Step1.txt",
+            "MedQA Textbook: Pathoma Pathology": "Pathoma_Husain.txt",
+            "MedQA Textbook: Pharmacology (Katzung)": "Pharmacology_Katzung.txt",
+        }
+        b_file = book_map.get(corpus_choice, "First_Aid_Step1.txt")
+        with st.spinner(f"Loading {corpus_choice} from data_clean/textbooks/en..."):
+            documents = get_medqa_textbook_corpus(b_file)
+            if not documents:
+                st.error(f"Failed to load textbook {b_file}.")
+                st.stop()
+            st.toast(f"Loaded {len(documents)} textbook sections from {corpus_choice}.", icon="📚")
     else:
         documents = get_sample_corpus()
 

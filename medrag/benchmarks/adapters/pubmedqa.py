@@ -453,12 +453,11 @@ class PubMedQAAdapter(DatasetAdapter):
         Does NOT include questions or gold labels.
         """
         corpus_env = os.environ.get("PUBMED_CORPUS_DIR") or os.environ.get("PUBMEDQA_CORPUS_DIR")
-        if corpus_env and os.path.exists(corpus_env):
-            from ..corpus_preparer import validate_corpus
-            if os.path.isfile(corpus_env):
-                with open(corpus_env, "r", encoding="utf-8") as f:
-                    raw_docs = json.load(f)
-                return validate_corpus(raw_docs)
+        if corpus_env and os.path.exists(corpus_env) and os.path.isfile(corpus_env):
+            from ...document_validator import validate_corpus
+            with open(corpus_env, "r", encoding="utf-8") as f:
+                raw_docs = json.load(f)
+            return validate_corpus(raw_docs)
 
         items = examples or self.load_split("test")
         docs: List[Document] = []
