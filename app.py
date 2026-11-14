@@ -20,7 +20,15 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-from config import MedRagConfig
+# Prevent Streamlit watcher crash on torch.classes inspection
+try:
+    import torch
+    if hasattr(torch, "classes") and not hasattr(torch.classes, "__path__"):
+        torch.classes.__path__ = []
+except Exception:
+    pass
+
+from config import DEFAULT_GROQ_MODEL, MedRagConfig
 from main import _build_sample_corpus, load_corpus_file
 from medrag import Action, Document, LLMClient, MedRagPipeline
 
@@ -29,7 +37,7 @@ st.set_page_config(
     page_title="MedRag — Medical Evidence Verification",
     page_icon="🩺",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ── Custom CSS ────────────────────────────────────────────────────────────────
@@ -99,10 +107,11 @@ st.markdown(
         font-size: 1.6rem;
         font-weight: 700;
         margin-top: 4px;
+        color: #000000;
     }
     .metric-label {
         font-size: 0.8rem;
-        color: #70757a;
+        color: #70759a;
         text-transform: uppercase;
         letter-spacing: 0.5px;
     }
@@ -134,10 +143,6 @@ def get_active_config() -> MedRagConfig:
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.image(
-        "https://api.iconify.design/material-symbols:health-and-safety-outline.svg?color=%231a73e8",
-        width=48,
-    )
     st.title("MedRag Settings")
 
     # Load defaults from .env
@@ -153,7 +158,14 @@ with st.sidebar:
     backend = st.selectbox("Backend Provider", backend_options, index=default_backend_idx)
 
     # Model input
-    default_model = env_cfg.llm_model or ("openai/gpt-oss-20b" if backend == "groq" else "gpt-4o-mini")
+    if backend == env_cfg.llm_backend and env_cfg.llm_model:
+        default_model = env_cfg.llm_model
+    elif backend == "groq":
+        default_model = DEFAULT_GROQ_MODEL
+    elif backend == "openai":
+        default_model = "gpt-4o-mini"
+    else:
+        default_model = ""
     model_name = st.text_input("Model Name (from .env)", value=default_model)
 
     api_key = env_cfg.llm_api_key or ""
@@ -180,6 +192,14 @@ with st.sidebar:
         value=float(env_cfg.conflict_threshold),
         step=0.05,
         help="Contradiction score above which a claim is considered Conflicted",
+    )
+    clinical_confidence_threshold = st.slider(
+        "Min Clinical Confidence",
+        min_value=0.40,
+        max_value=0.95,
+        value=float(env_cfg.clinical_confidence_threshold),
+        step=0.05,
+        help="Minimum heuristic confidence after source quality and recency are considered",
     )
     max_rounds = st.slider(
         "Max Retrieval Rounds",
@@ -212,24 +232,29 @@ st.markdown(
 # ── Quick Example Questions ───────────────────────────────────────────────────
 st.markdown("**Example Clinical Questions:**")
 examples = [
-    "Is metformin safe for patients with renal impairment?",
-    "Should aspirin be used for primary prevention of cardiovascular events in elderly patients?",
-    "What anticoagulant is preferred for stroke prevention in non-valvular atrial fibrillation?",
-    "Can SGLT2 inhibitors be prescribed in patients with chronic kidney disease?",
+    ("Metformin and kidney function", "Is metformin safe for patients with renal impairment?"),
+    (
+        "Aspirin for older adults",
+        "Should aspirin be used for primary prevention of cardiovascular events in elderly patients?",
+    ),
+    (
+        "Anticoagulants for atrial fibrillation",
+        "What anticoagulant is preferred for stroke prevention in non-valvular atrial fibrillation?",
+    ),
+    (
+        "SGLT2 inhibitors and kidney disease",
+        "Can SGLT2 inhibitors be prescribed in patients with chronic kidney disease?",
+    ),
 ]
 
-cols = st.columns(len(examples))
-selected_example = None
-for i, ex in enumerate(examples):
-    short_label = ex if len(ex) < 45 else ex[:42] + "..."
-    if cols[i].button(short_label, key=f"ex_{i}", use_container_width=True):
-        st.session_state["query_input"] = ex
+cols = st.columns(2)
+for i, (label, question) in enumerate(examples):
+    if cols[i % 2].button(label, key=f"ex_{i}", use_container_width=True):
+        st.session_state["main_query_input"] = question
 
 # Query Input
-query_val = st.session_state.get("query_input", "")
 user_question = st.text_input(
     "Enter clinical question:",
-    value=query_val,
     placeholder="e.g. Is metformin safe for patients with renal impairment?",
     key="main_query_input",
 )
@@ -253,6 +278,8 @@ if run_clicked:
                 items = json.loads(uploaded_file.getvalue().decode("utf-8"))
             if not isinstance(items, list):
                 items = [items]
+            if any(not isinstance(d.get("metadata", {}), dict) for d in items):
+                raise ValueError("Each document's metadata field must be a JSON object.")
             documents = [
                 Document(
                     doc_id=str(d.get("id", i)),
@@ -261,6 +288,7 @@ if run_clicked:
                     source=d.get("source", ""),
                     year=int(d.get("year", 2024)),
                     quality_score=float(d.get("quality_score", 0.5)),
+                    metadata=d.get("metadata", {}),
                 )
                 for i, d in enumerate(items)
             ]
@@ -277,6 +305,7 @@ if run_clicked:
     cfg.llm_model = model_name
     cfg.support_threshold = support_threshold
     cfg.conflict_threshold = conflict_threshold
+    cfg.clinical_confidence_threshold = clinical_confidence_threshold
     cfg.max_search_rounds = max_rounds
     cfg.use_reranker = use_reranker
 
@@ -295,6 +324,10 @@ if run_clicked:
 
     st.session_state["latest_result"] = result
     st.session_state["latest_latency"] = latency
+    st.session_state.pop("selected_source_id", None)
+    st.session_state["llm_error"] = llm.last_error if llm.call_failed else None
+    st.session_state["llm_backend"] = cfg.llm_backend
+    st.session_state["llm_model"] = cfg.llm_model
 
 # ── Render Results ────────────────────────────────────────────────────────────
 if "latest_result" in st.session_state:
@@ -310,10 +343,23 @@ if "latest_result" in st.session_state:
     m1, m2, m3, m4, m5, m6 = st.columns(6)
 
     # Decision Badge
-    is_stop = result.action == Action.STOP
-    decision_color = "#137333" if is_stop else "#c5221f"
-    decision_bg = "#e6f4ea" if is_stop else "#fce8e6"
-    decision_text = "VERIFIED (STOP)" if is_stop else "ABSTAINED (RISK/GAP)"
+    action_str = result.action.value if hasattr(result.action, "value") else str(result.action)
+    if action_str in ("STOP", "VERIFIED"):
+        decision_color = "#137333"
+        decision_bg = "#e6f4ea"
+        decision_text = "VERIFIED (STOP)"
+    elif action_str == "PARTIAL":
+        decision_color = "#b06000"
+        decision_bg = "#fef7e0"
+        decision_text = "PARTIAL (QUALIFIED)"
+    elif action_str == "CONFLICTED":
+        decision_color = "#c5221f"
+        decision_bg = "#fce8e6"
+        decision_text = "CONFLICTED"
+    else:
+        decision_color = "#c5221f"
+        decision_bg = "#fce8e6"
+        decision_text = "ABSTAINED"
 
     with m1:
         st.markdown(
@@ -363,7 +409,7 @@ if "latest_result" in st.session_state:
         )
 
     with m5:
-        risk_score = summary.get("clinical_risk", 0.0)
+        risk_score = summary.get("max_clinical_risk", 0.0)
         risk_color = "#c5221f" if risk_score >= 0.7 else "#137333"
         st.markdown(
             f"""
@@ -400,14 +446,33 @@ if "latest_result" in st.session_state:
 
     # ── Tab 1: Answer ─────────────────────────────────────────────────────────
     with tab_ans:
-        if result.action == Action.ABSTAIN:
+        action_str = result.action.value if hasattr(result.action, "value") else str(result.action)
+        if action_str in ("STOP", "VERIFIED"):
+            st.success("✅ **Verified Clinical Statement:** All claims are confirmed by retrieved literature without material contradiction.")
+        elif action_str == "PARTIAL":
+            st.warning("⚠️ **Qualified Partial Clinical Statement:** Some claims are verified by retrieved literature while others remain unconfirmed.")
+        elif action_str == "CONFLICTED":
+            st.error("⚔️ **Contradictory Clinical Evidence Detected:** The retrieved medical literature contains material disagreements.")
+        else:
             st.error(
-                "⚠️ **MedRag Abstained from generating a full clinical recommendation.**\n\n"
+                "🛑 **MedRag Abstained from generating a clinical recommendation.**\n\n"
                 "The adaptive controller determined that the evidence in the corpus is either conflicting, "
                 "lacking, or does not meet the strict safety threshold required for this clinical risk profile."
             )
-        else:
-            st.success("✅ **Verified Clinical Statement:** All claims are confirmed by retrieved literature.")
+            llm_error = st.session_state.get("llm_error") or ""
+            if (
+                st.session_state.get("llm_backend") == "groq"
+                and "model_not_found" in llm_error.lower()
+            ):
+                failed_model = st.session_state.get("llm_model", "configured model")
+                st.warning(
+                    f"Groq rejected model `{failed_model}`. It may have been retired or may not be "
+                    "available to this account. Update `GROQ_MODEL` in `.env` or choose an active "
+                    "model in the [Groq model catalog](https://console.groq.com/docs/models). "
+                    f"Groq's current migration guidance recommends `{DEFAULT_GROQ_MODEL}` as a "
+                    "replacement for `llama-3.3-70b-versatile`. Then rerun the query. A successful "
+                    "LLM call does not verify the clinical evidence; MedRag may still abstain."
+                )
 
         st.markdown(result.final_answer)
 
@@ -439,14 +504,19 @@ if "latest_result" in st.session_state:
                     st.markdown(f'<span class="badge {badge_class}">{badge_label}</span>', unsafe_allow_html=True)
                     st.write("")
 
-                    c1, c2 = st.columns(2)
+                    c1, c2, c3 = st.columns(3)
                     c1.progress(
                         min(max(float(c.support_score), 0.0), 1.0),
-                        text=f"Entailment / Support: {c.support_score:.2%}",
+                        text=f"Support (Entailment): {c.support_score:.1%}",
                     )
                     c2.progress(
                         min(max(float(c.conflict_score), 0.0), 1.0),
-                        text=f"Contradiction / Conflict: {c.conflict_score:.2%}",
+                        text=f"Conflict (Contradiction): {c.conflict_score:.1%}",
+                    )
+                    conf = getattr(c, "clinical_confidence", c.support_score)
+                    c3.progress(
+                        min(max(float(conf), 0.0), 1.0),
+                        text=f"Clinical Confidence: {conf:.1%}",
                     )
 
                     best_src = getattr(c, "best_source", "")
@@ -457,6 +527,81 @@ if "latest_result" in st.session_state:
                         st.markdown(f"**Top Evidence Match:** *{best_src}*{yr_str}")
                     if best_snip:
                         st.caption(f"Excerpt: \"{best_snip}...\"")
+
+                    # Display individual supporting & contradicting passages if present
+                    sup_passages = getattr(c, "supporting_passages", [])
+                    con_passages = getattr(c, "contradicting_passages", [])
+                    if sup_passages:
+                        with st.container(border=True):
+                            st.markdown(f"**Supporting Passages ({len(sup_passages)})**")
+                            for passage_idx, p in enumerate(sup_passages):
+                                st.markdown(
+                                    f"- **{p.doc_title}** ({p.year} · {p.source}) · "
+                                    f"Quality: `{p.quality_score:.2f}` · "
+                                    f"Entailment: `{p.entailment:.1%}` · ID: `{p.doc_id}`"
+                                    f"{' · Illustrative sample' if p.illustrative else ''}"
+                                )
+                                st.caption(p.text)
+                                if st.button(
+                                    "View full source",
+                                    key=f"support_source_{idx}_{passage_idx}",
+                                ):
+                                    st.session_state["selected_source_id"] = p.doc_id
+                    if con_passages:
+                        with st.container(border=True):
+                            st.markdown(f"**Contradicting Passages ({len(con_passages)})**")
+                            for passage_idx, p in enumerate(con_passages):
+                                st.markdown(
+                                    f"- ⚠️ **{p.doc_title}** ({p.year} · {p.source}) · "
+                                    f"Quality: `{p.quality_score:.2f}` · "
+                                    f"Contradiction: `{p.contradiction:.1%}` · ID: `{p.doc_id}`"
+                                    f"{' · Illustrative sample' if p.illustrative else ''}"
+                                )
+                                st.caption(p.text)
+                                if st.button(
+                                    "View full source",
+                                    key=f"conflict_source_{idx}_{passage_idx}",
+                                ):
+                                    st.session_state["selected_source_id"] = p.doc_id
+                    neutral_passages = getattr(c, "neutral_passages", [])
+                    if neutral_passages:
+                        with st.container(border=True):
+                            st.markdown(f"**Neutral Passages ({len(neutral_passages)})**")
+                            for passage_idx, p in enumerate(neutral_passages):
+                                st.markdown(
+                                    f"- **{p.doc_title}** ({p.year} · {p.source}) · "
+                                    f"Quality: `{p.quality_score:.2f}` · "
+                                    f"Neutral: `{p.neutral:.1%}` · ID: `{p.doc_id}`"
+                                    f"{' · Illustrative sample' if p.illustrative else ''}"
+                                )
+                                st.caption(p.text)
+                                if st.button(
+                                    "View full source",
+                                    key=f"neutral_source_{idx}_{passage_idx}",
+                                ):
+                                    st.session_state["selected_source_id"] = p.doc_id
+
+            selected_source_id = st.session_state.get("selected_source_id")
+            if selected_source_id:
+                selected_source = next(
+                    (
+                        rdoc.document
+                        for rdoc in result.retrieved_docs
+                        if rdoc.document.doc_id == selected_source_id
+                    ),
+                    None,
+                )
+                if selected_source:
+                    st.markdown("---")
+                    st.markdown(f"### Full source: {selected_source.title}")
+                    st.caption(
+                        f"{selected_source.year} · {selected_source.source} · "
+                        f"Quality: {selected_source.quality_score:.2f} · "
+                        f"Document ID: {selected_source.doc_id}"
+                    )
+                    st.write(selected_source.text)
+                else:
+                    st.warning("The selected source is not available in the retrieved documents.")
         else:
             st.info("No decomposed claims available for this query.")
 
@@ -466,7 +611,7 @@ if "latest_result" in st.session_state:
         trajectory_log = getattr(result, "trajectory", None) or getattr(result, "history", [])
         if trajectory_log:
             for step in trajectory_log:
-                rnd = step.get("round", 0) + 1
+                rnd = step.get("round", 1)
                 q = step.get("query", "")
                 docs_count = step.get("new_docs", 0)
                 claims_count = step.get("n_claims", 0)
@@ -490,4 +635,5 @@ if "latest_result" in st.session_state:
             doc = rdoc.document
             with st.expander(f"[{i+1}] {doc.title} ({doc.year} · {doc.source}) — Quality: {doc.quality_score:.2f}"):
                 st.write(doc.text)
-                st.caption(f"Doc ID: {doc.doc_id} | Final Relevance Score: {rdoc.final_score:.4f}")
+                final_score = getattr(rdoc, "final_score", getattr(rdoc, "rerank_score", getattr(rdoc, "score", 0.0)))
+                st.caption(f"Doc ID: {doc.doc_id} | Final Relevance Score: {final_score:.4f}")

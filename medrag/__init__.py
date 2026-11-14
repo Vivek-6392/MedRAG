@@ -5,7 +5,7 @@ Public API exports.
 from .pipeline import MedRagPipeline, PipelineResult
 from .retriever import Document, HybridRetriever, RetrievedDocument
 from .generator import LLMClient, GeneratedAnswer
-from .evidence_state import EvidenceState, ClaimEvidence, ClaimStatus
+from .evidence_state import EvidenceState, ClaimEvidence, ClaimStatus, EvidencePassage
 from .controller import Action, ControllerDecision
 from .query_understanding import ClinicalQuery
 
@@ -20,6 +20,7 @@ __all__ = [
     "EvidenceState",
     "ClaimEvidence",
     "ClaimStatus",
+    "EvidencePassage",
     "Action",
     "ControllerDecision",
     "ClinicalQuery",

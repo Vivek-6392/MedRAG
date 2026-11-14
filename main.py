@@ -218,6 +218,7 @@ def _build_sample_corpus():
             source=d["source"],
             year=d["year"],
             quality_score=d["quality_score"],
+            metadata={"illustrative": True},
         )
         for d in SAMPLE_CORPUS_DATA
     ]
@@ -236,6 +237,9 @@ def load_corpus_file(path: str):
     if not isinstance(items, list):
         items = [items]
     for i, d in enumerate(items):
+        metadata = d.get("metadata", {})
+        if not isinstance(metadata, dict):
+            raise ValueError(f"Corpus document {i} metadata must be a JSON object.")
         docs.append(Document(
             doc_id=str(d.get("id", i)),
             title=d.get("title", ""),
@@ -243,6 +247,7 @@ def load_corpus_file(path: str):
             source=d.get("source", d.get("journal", "")),
             year=int(d.get("year", d.get("pub_year", 2020))),
             quality_score=float(d.get("quality_score", 0.5)),
+            metadata=metadata,
         ))
     return docs
 

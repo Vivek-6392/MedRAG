@@ -35,6 +35,10 @@ class RetrievedDocument:
     dense_rank: Optional[int] = None
     rerank_score: Optional[float] = None
 
+    @property
+    def final_score(self) -> float:
+        return self.rerank_score if self.rerank_score is not None else self.score
+
 
 # ── BM25 ──────────────────────────────────────────────────────────────────────
 
@@ -44,15 +48,21 @@ class BM25Retriever:
         self._docs: List[Document] = []
 
     def index(self, documents: List[Document]) -> None:
-        from rank_bm25 import BM25Okapi
         self._docs = documents
+        if not documents:
+            self._bm25 = None
+            return
+        from rank_bm25 import BM25Okapi
         tokenised = [doc.full_text.lower().split() for doc in documents]
         self._bm25 = BM25Okapi(tokenised)
 
     def retrieve(self, query: str, top_k: int = 20) -> List[RetrievedDocument]:
-        if self._bm25 is None:
+        if self._bm25 is None or top_k <= 0 or not query or not query.strip():
             return []
-        scores: np.ndarray = self._bm25.get_scores(query.lower().split())
+        tokens = query.lower().split()
+        if not tokens:
+            return []
+        scores: np.ndarray = self._bm25.get_scores(tokens)
         indices = np.argsort(scores)[::-1][:top_k]
         return [
             RetrievedDocument(
@@ -79,18 +89,21 @@ class DenseRetriever:
             self._model = SentenceTransformer(self.model_name)
 
     def index(self, documents: List[Document]) -> None:
-        self._load()
         self._docs = documents
+        if not documents:
+            self._embeddings = None
+            return
+        self._load()
         texts = [doc.full_text for doc in documents]
         self._embeddings = self._model.encode(
             texts, show_progress_bar=True, batch_size=32, normalize_embeddings=True
         )
 
     def retrieve(self, query: str, top_k: int = 20) -> List[RetrievedDocument]:
-        if self._embeddings is None:
+        if self._embeddings is None or top_k <= 0 or not query or not query.strip():
             return []
         self._load()
-        q_emb = self._model.encode([query], normalize_embeddings=True)
+        q_emb = self._model.encode([query.strip()], normalize_embeddings=True)
         scores: np.ndarray = (q_emb @ self._embeddings.T)[0]
         indices = np.argsort(scores)[::-1][:top_k]
         return [
@@ -121,7 +134,7 @@ class CrossEncoderReranker:
         documents: List[RetrievedDocument],
         top_k: int = 5,
     ) -> List[RetrievedDocument]:
-        if not documents:
+        if not documents or top_k <= 0:
             return []
         self._load()
         pairs = [(query, rdoc.document.full_text[:512]) for rdoc in documents]
@@ -199,6 +212,13 @@ class HybridRetriever:
         print("  Indexing complete.")
 
     def retrieve(self, query: str) -> List[RetrievedDocument]:
+        if (
+            not query
+            or not query.strip()
+            or self.top_k_retrieve <= 0
+            or self.top_k_rerank <= 0
+        ):
+            return []
         bm25_hits = self.bm25.retrieve(query, top_k=self.top_k_retrieve)
         dense_hits = self.dense.retrieve(query, top_k=self.top_k_retrieve)
 
