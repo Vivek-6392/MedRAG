@@ -5,6 +5,7 @@ Extracts: entities • intent • clinical context • risk level
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from typing import List, Optional, TYPE_CHECKING
@@ -54,12 +55,23 @@ class ClinicalQueryUnderstanding:
             "mechanism", "how does", "why does", "pathway", "action", "pharmacokinetic",
         ],
     }
+    QUESTION_STARTERS: set[str] = {
+        "are", "can", "could", "does", "do", "has", "have", "how", "is",
+        "may", "might", "should", "what", "when", "where", "which", "who",
+        "why", "will", "would",
+    }
 
     HIGH_RISK_TERMS: list[str] = [
         "pregnancy", "pregnant", "pediatric", "child", "infant", "neonatal",
-        "renal failure", "hepatic failure", "overdose", "emergency",
+        "renal failure", "renal impairment", "chronic kidney disease", "hepatic failure",
+        "overdose", "emergency", "elderly", "older adult", "anticoagulant",
+        "anticoagulation", "stroke prevention",
         "anaphylaxis", "contraindicated", "fatal", "icu", "critically ill",
         "sepsis", "cardiac arrest", "allergy",
+    ]
+    CRITICAL_RISK_TERMS: list[str] = [
+        "overdose", "emergency", "anaphylaxis", "fatal", "icu",
+        "critically ill", "sepsis", "cardiac arrest",
     ]
 
     def __init__(self, llm_client: Optional["LLMClient"] = None):
@@ -71,8 +83,10 @@ class ClinicalQueryUnderstanding:
         if self.llm and self.llm.backend != "mock":
             try:
                 return self._llm_parse(question)
-            except Exception:
-                pass
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                print(f"[Warning] Invalid clinical query response; using heuristic parsing: {exc}")
+            except Exception as exc:
+                print(f"[Warning] Clinical query LLM failed; using heuristic parsing: {exc}")
         return self._heuristic_parse(question)
 
     # ── private ─────────────────────────────────────────────────────────────
@@ -90,14 +104,39 @@ class ClinicalQueryUnderstanding:
             "Respond with ONLY valid JSON — no markdown, no extra text."
         )
         raw = self.llm.complete(prompt, max_tokens=300)
+        if self.llm.call_failed:
+            raise RuntimeError(f"Clinical query LLM failure: {self.llm.last_error}")
         data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("Clinical query response must be a JSON object.")
+
+        entities = data.get("entities")
+        intent = data.get("intent")
+        context = data.get("context")
+        risk = data.get("clinical_risk")
+        search_query = data.get("search_query")
+        valid_intents = {*self.INTENT_KEYWORDS, "general"}
+        if (
+            not isinstance(entities, list)
+            or not all(isinstance(entity, str) for entity in entities)
+            or intent not in valid_intents
+            or not isinstance(context, str)
+            or not isinstance(risk, (int, float))
+            or isinstance(risk, bool)
+            or not math.isfinite(risk)
+            or not 0.0 <= risk <= 1.0
+            or not isinstance(search_query, str)
+            or not search_query.strip()
+        ):
+            raise ValueError("Clinical query response does not match the required schema.")
+
         return ClinicalQuery(
             original_question=question,
-            entities=data.get("entities", []),
-            intent=data.get("intent", "general"),
-            context=data.get("context", ""),
-            clinical_risk=float(data.get("clinical_risk", 0.5)),
-            search_query=data.get("search_query", question),
+            entities=entities[:10],
+            intent=intent,
+            context=context,
+            clinical_risk=float(risk),
+            search_query=search_query.strip(),
         )
 
     def _heuristic_parse(self, question: str) -> ClinicalQuery:
@@ -111,13 +150,18 @@ class ClinicalQueryUnderstanding:
                 break
 
         # Risk
-        hits = sum(1 for t in self.HIGH_RISK_TERMS if t in q)
-        risk = min(0.3 + hits * 0.15, 1.0)
+        critical = any(t in q for t in self.CRITICAL_RISK_TERMS)
+        high_risk = any(t in q for t in self.HIGH_RISK_TERMS)
+        risk = 1.0 if critical else 0.8 if high_risk else 0.3
         if intent in ("dosage", "safety"):
             risk = max(risk, 0.6)
 
         # Entities — capitalised noun phrases
-        entities = re.findall(r"\b[A-Z][a-z]+(?:\s[A-Z][a-z]+)*\b", question)
+        entities = [
+            entity
+            for entity in re.findall(r"\b[A-Z][a-z]+(?:\s[A-Z][a-z]+)*\b", question)
+            if entity.casefold() not in self.QUESTION_STARTERS
+        ]
 
         return ClinicalQuery(
             original_question=question,

@@ -55,9 +55,11 @@ Medical Question
 
 | Action    | Condition |
 |-----------|-----------|
-| **STOP**    | All claims: `support ≥ threshold` AND `conflict < threshold` |
-| **ABSTAIN** | Round limit reached · OR · Very high clinical risk + unresolved conflict |
+| **STOP**    | All claims meet the configured entailment and clinical-confidence thresholds, with no material contradiction |
+| **PARTIAL** | Some claims meet those thresholds, remaining claims are explicitly unresolved, and maximum clinical risk is below the configured high-risk threshold |
+| **CONFLICTED** | Material contradictory evidence remains; report both positions rather than selecting one |
 | **SEARCH**  | Evidence gaps / conflicts remain, rounds available → targeted re-query |
+| **ABSTAIN** | Evidence is insufficient or unreliable, no specific gap query can be formed, or high-risk claims remain unresolved |
 
 ---
 
@@ -76,6 +78,7 @@ python main.py -q "Is metformin safe for patients with renal impairment?"
 # 4. Built-in demo questions
 python main.py --demo
 ```
+
 
 ---
 
@@ -104,7 +107,7 @@ MedRag/
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `llm_backend` | `"openai"` | `openai` / `groq` / `ollama` / `mock` |
+| `llm_backend` | `"groq"` | `openai` / `groq` / `ollama` / `mock` |
 | `llm_model` | `"gpt-4o-mini"` | Model name |
 | `dense_model` | `all-MiniLM-L6-v2` | Sentence embedding model |
 | `reranker_model` | `ms-marco-MiniLM-L-6-v2` | Cross-encoder reranker |
@@ -113,9 +116,31 @@ MedRag/
 | `top_k_rerank` | `5` | Docs passed to LLM / NLI |
 | `support_threshold` | `0.70` | Min entailment for STOP |
 | `conflict_threshold` | `0.35` | Max contradiction for STOP |
-| `max_search_rounds` | `3` | ABSTAIN after N rounds |
-| `high_risk_threshold` | `0.75` | Stricter threshold above this risk |
-| `high_risk_penalty` | `0.15` | Extra support required for high-risk |
+| `missing_threshold` | `0.35` | Below this entailment score, a non-conflicted claim is missing rather than uncertain |
+| `clinical_confidence_threshold` | `0.65` | Minimum heuristic confidence after source-quality and recency factors |
+
+For Groq, `GROQ_MODEL` must name a model available to your account. The example configuration uses
+`openai/gpt-oss-120b`, which Groq currently recommends as a migration target for
+`llama-3.3-70b-versatile`. Check the [Groq model catalog](https://console.groq.com/docs/models)
+if Groq returns `model_not_found`; availability can vary by account and can change over time.
+Groq GPT-OSS requests use low reasoning effort and a separate completion-token budget so internal
+reasoning is less likely to consume the entire allowance before producing answer text.
+| `max_search_rounds` | `3` | Maximum retrieval/verification rounds before a final decision |
+| `high_risk_threshold` | `0.75` | High-risk unresolved claims cannot produce a partial answer after search |
+
+`high_risk_penalty` remains accepted for configuration compatibility but is not used to shift evidence thresholds.
+Risk changes the final action policy instead, keeping verifier and controller thresholds consistent. Retrieval
+relevance scores are not used as NLI support; source quality and recency affect a heuristic confidence
+indicator separately. This indicator is not a calibrated clinical probability.
+All citations point to passage IDs and include source metadata. Evidence status is relative to the supplied
+corpus only: the built-in sample corpus is illustrative, not authoritative clinical literature.
+The built-in sample documents are explicitly marked illustrative and cannot meet the clinical-confidence
+gate for a **STOP / VERIFIED** result, regardless of their example quality scores.
+
+Claim statuses use one definition across verifier, evidence state, and controller: **conflicted** when
+contradiction meets its threshold; **supported** when entailment and heuristic clinical confidence both meet
+their thresholds with traceable non-illustrative support and no material contradiction; **missing** when entailment is below the missing
+threshold without a material conflict; otherwise **uncertain**.
 
 ---
 
@@ -137,6 +162,8 @@ JSON or JSONL files containing a list of documents:
 ```
 
 `quality_score` (0–1) represents journal / source credibility and influences the Evidence State.
+Optional `metadata: {"illustrative": true}` marks non-authoritative example data that cannot satisfy
+the clinical-confidence gate.
 
 ---
 
