@@ -15,6 +15,22 @@ from .evidence_state import ClaimEvidence, EvidencePassage, EvidenceState
 from .generator import _extract_specific_keywords
 
 
+_GENERIC_BIO_TERMS = {
+    "cell", "cells", "plant", "plants", "tissue", "tissues", "human", "humans",
+    "organism", "organisms", "biological", "biology", "body", "system", "systems",
+    "study", "studies", "result", "results", "finding", "findings", "paper",
+    "method", "methods", "analysis", "group", "groups", "effect", "effects",
+    "level", "levels", "activity", "process", "processes", "mechanism", "mechanisms",
+    "role", "roles", "involved", "involvement", "associated", "type", "types",
+    "model", "models", "growth", "function", "functions", "control", "controls",
+    "tested", "hypothesis", "examined", "observed", "evaluated", "reported",
+    "participate", "regulated", "regulation", "course", "degree", "way", "ways",
+    "using", "also", "that", "this", "these", "those", "selected", "various",
+    "leaves", "leaf", "stage", "stages", "remodels", "development", "developmental",
+    "treatment", "treatments", "treated", "patient", "patients", "evidence",
+}
+
+
 class NLIVerifier:
     """
     Scores each atomic claim against every retrieved document using NLI.
@@ -208,11 +224,13 @@ class NLIVerifier:
                 # Apply the same configured thresholds used for claim status.
                 is_supporting = ent >= support_threshold
 
-                # A passage only contradicts if it shares topical relevance/entity with the claim
+                # A passage only contradicts if it shares specific clinical/biological entities with the claim
                 has_overlap = True
                 if claim_kw:
                     p_tokens = set(re.findall(r"\b[a-zA-Z0-9-]{3,}\b", passage.text.lower()))
-                    has_overlap = bool(claim_kw & p_tokens)
+                    specific_claim_kw = claim_kw - _GENERIC_BIO_TERMS
+                    check_kw = specific_claim_kw if specific_claim_kw else claim_kw
+                    has_overlap = bool(check_kw & p_tokens)
 
                 is_contradicting = (
                     has_overlap and con >= conflict_threshold and con > ent and con > neu
