@@ -40,8 +40,10 @@ class ExperimentConfig(BaseModel):
     use_reranker: bool = Field(True)
     reranker_model: str = Field("cross-encoder/ms-marco-MiniLM-L-6-v2")
 
+    relevance_threshold: Optional[float] = Field(None, description="Abstain if best round-1 reranker score is below this (None = off)")
+
     # Claim Verification settings
-    nli_model: str = Field("cross-encoder/nli-MiniLM2-L6-H768")
+    nli_model: str = Field("ygivenx/modernbert-base-mednli")
     nli_batch_size: int = Field(16, gt=0)
     support_threshold: float = Field(0.70, ge=0.0, le=1.0)
     conflict_threshold: float = Field(0.35, ge=0.0, le=1.0)
@@ -96,6 +98,7 @@ class ExperimentConfig(BaseModel):
             reranker_model=self.reranker_model,
             nli_model=self.nli_model,
             nli_batch_size=self.nli_batch_size,
+            relevance_threshold=self.relevance_threshold,
             support_threshold=self.support_threshold,
             conflict_threshold=self.conflict_threshold,
             missing_threshold=self.missing_threshold,

@@ -80,11 +80,22 @@ class BM25Retriever:
 # ── Dense ─────────────────────────────────────────────────────────────────────
 
 class DenseRetriever:
-    def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> None:
+    def __init__(
+        self,
+        model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+        vector_backend: str = "chromadb",
+        collection_name: str = "medrag_corpus",
+        persist_dir: Optional[str] = "./data/chroma_db",
+    ) -> None:
         self.model_name = model_name
+        self.vector_backend = (vector_backend or "chromadb").lower()
+        self.collection_name = collection_name
+        self.persist_dir = persist_dir
         self._model = None
         self._embeddings: Optional[np.ndarray] = None
         self._docs: List[Document] = []
+        self._docs_by_id: Dict[str, Document] = {}
+        self._store = None
 
     def _load(self) -> None:
         if self._model is None:
@@ -95,22 +106,80 @@ class DenseRetriever:
             except Exception:
                 self._model = SentenceTransformer(self.model_name)
 
+    def _init_store(self) -> None:
+        if self._store is not None:
+            return
+        if self.vector_backend == "chromadb":
+            try:
+                from .vector_store import ChromaVectorStore
+                self._store = ChromaVectorStore(
+                    collection_name=self.collection_name,
+                    persist_dir=self.persist_dir,
+                )
+            except Exception:
+                from .vector_store import NumpyVectorStore
+                self._store = NumpyVectorStore()
+        elif self.vector_backend == "faiss":
+            try:
+                from .vector_store import FAISSVectorStore
+                self._store = FAISSVectorStore(dim=384)
+            except Exception:
+                from .vector_store import NumpyVectorStore
+                self._store = NumpyVectorStore()
+        else:
+            from .vector_store import NumpyVectorStore
+            self._store = NumpyVectorStore()
+
     def index(self, documents: List[Document]) -> None:
         self._docs = documents
+        self._docs_by_id = {doc.doc_id: doc for doc in documents}
         if not documents:
             self._embeddings = None
             return
         self._load()
+        self._init_store()
+
+        # If ChromaDB collection already contains all documents, skip redundant re-embedding
+        if self.vector_backend == "chromadb" and self._store is not None and hasattr(self._store, "has_ids"):
+            try:
+                sample_check = [documents[0].doc_id, documents[-1].doc_id]
+                if self._store.count() >= len(documents) and self._store.has_ids(sample_check):
+                    print(f"  [DenseRetriever] ChromaDB collection '{self.collection_name}' already indexed ({self._store.count()} vectors cached). Reusing index.")
+                    return
+            except Exception:
+                pass
+
         texts = [doc.full_text for doc in documents]
         self._embeddings = self._model.encode(
             texts, show_progress_bar=True, batch_size=32, normalize_embeddings=True
         )
+        if self._store is not None:
+            self._store.index(documents, self._embeddings)
 
     def retrieve(self, query: str, top_k: int = 20) -> List[RetrievedDocument]:
-        if self._embeddings is None or top_k <= 0 or not query or not query.strip():
+        if not self._docs or top_k <= 0 or not query or not query.strip():
             return []
         self._load()
+        self._init_store()
         q_emb = self._model.encode([query.strip()], normalize_embeddings=True)
+        if self._store is not None:
+            scored_ids = self._store.search(q_emb, top_k=top_k)
+            results = []
+            for rank, (doc_id, score) in enumerate(scored_ids):
+                doc = self._docs_by_id.get(doc_id)
+                if doc is not None:
+                    results.append(
+                        RetrievedDocument(
+                            document=doc,
+                            score=float(score),
+                            dense_rank=rank + 1,
+                            dense_score=float(score),
+                        )
+                    )
+            return results
+
+        if self._embeddings is None:
+            return []
         scores: np.ndarray = (q_emb @ self._embeddings.T)[0]
         indices = np.argsort(scores)[::-1][:top_k]
         return [
@@ -242,9 +311,17 @@ class HybridRetriever:
         top_k_retrieve: int = 20,
         top_k_rerank: int = 5,
         use_reranker: bool = True,
+        vector_backend: str = "chromadb",
+        collection_name: str = "medrag_corpus",
+        persist_dir: Optional[str] = "./data/chroma_db",
     ) -> None:
         self.bm25 = BM25Retriever()
-        self.dense = DenseRetriever(dense_model)
+        self.dense = DenseRetriever(
+            model_name=dense_model,
+            vector_backend=vector_backend,
+            collection_name=collection_name,
+            persist_dir=persist_dir,
+        )
         self.reranker = CrossEncoderReranker(reranker_model) if use_reranker else None
         self.bm25_weight = bm25_weight
         self.dense_weight = dense_weight

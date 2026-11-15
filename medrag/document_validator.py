@@ -180,3 +180,75 @@ def validate_corpus(items: List[Any]) -> List[Document]:
             raise ValueError(f"Corpus validation failed at document index {i}: {e}") from e
 
     return documents
+
+
+def parse_uploaded_medical_document(
+    file_name: str,
+    raw_bytes: bytes,
+    chunk_size: int = 700,
+    chunk_overlap: int = 150,
+) -> List[Document]:
+    """
+    Parses an uploaded medical document (.pdf, .docx, .doc, .txt, .md), extracts clean text,
+    and splits it into sentence-boundary chunks with provenance metadata.
+    """
+    import os
+    ext = os.path.splitext(file_name)[1].lower()
+    text = ""
+
+    if ext == ".pdf":
+        try:
+            import fitz
+            doc = fitz.open(stream=raw_bytes, filetype="pdf")
+            pages = []
+            for page_idx, page in enumerate(doc):
+                page_text = page.get_text()
+                if page_text.strip():
+                    pages.append(f"[Page {page_idx + 1}]\n{page_text.strip()}")
+            text = "\n\n".join(pages)
+        except Exception:
+            import io
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(raw_bytes))
+            pages = []
+            for page_idx, page in enumerate(reader.pages):
+                t = page.extract_text()
+                if t and t.strip():
+                    pages.append(f"[Page {page_idx + 1}]\n{t.strip()}")
+            text = "\n\n".join(pages)
+    elif ext in (".docx", ".doc"):
+        import io
+        import docx
+        try:
+            doc = docx.Document(io.BytesIO(raw_bytes))
+            parts = []
+            for p in doc.paragraphs:
+                if p.text.strip():
+                    parts.append(p.text.strip())
+            for table in doc.tables:
+                for row in table.rows:
+                    row_text = " | ".join(c.text.strip() for c in row.cells if c.text.strip())
+                    if row_text:
+                        parts.append(row_text)
+            text = "\n\n".join(parts)
+        except Exception as e:
+            if ext == ".doc":
+                text = raw_bytes.decode("latin-1", errors="replace")
+                text = "".join(ch for ch in text if ch.isprintable() or ch in "\n\t")
+            else:
+                raise e
+    elif ext in (".txt", ".md"):
+        text = raw_bytes.decode("utf-8", errors="replace")
+    else:
+        raise ValueError(f"Unsupported file format: {ext}. Supported formats are .pdf, .docx, .doc, .txt, .md")
+
+    if not text.strip():
+        raise ValueError("The uploaded document contains no readable text.")
+
+    from .benchmarks.corpus_preparer import TextbookCorpusPreparer
+    preparer = TextbookCorpusPreparer(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    title_base = os.path.splitext(file_name)[0].replace("_", " ").title()
+    docs = preparer.chunk_textbook(text=text, book_title=title_base, source_filename=file_name)
+    for d in docs:
+        d.source = file_name
+    return docs

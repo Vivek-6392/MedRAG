@@ -31,6 +31,21 @@ _STOPWORDS: Set[str] = {
 }
 
 
+# Statements about the evidence set itself ("the provided evidence does not address...")
+# are not verifiable medical claims and must never be sent to the NLI verifier.
+_META_CLAIM = re.compile(
+    r"\b(provided|supplied|retrieved|given|available)\s+(evidence|passages?|documents?|context|literature)\b"
+    r"|\b(cannot|can't|can not|unable to)\s+(determine|conclude|answer|say)\b"
+    r"|\b(does|do|did)\s+not\s+(address|mention|provide|contain|discuss)\b"
+    r"|\binsufficient\s+(clinical\s+)?evidence\b",
+    re.IGNORECASE,
+)
+
+
+def _drop_meta_claims(claims: List[str]) -> List[str]:
+    return [c for c in claims if not _META_CLAIM.search(c)]
+
+
 def _extract_specific_keywords(text: str) -> List[str]:
     tokens = re.findall(r"\b[a-zA-Z0-9-]{3,}\b", text.lower())
     seen = set()
@@ -380,7 +395,9 @@ Instructions:
                 if isinstance(parsed, list) and all(isinstance(c, str) for c in parsed):
                     cleaned = [c.strip() for c in parsed if len(c.strip()) > 15]
                     if cleaned:
-                        return cleaned[:8]
+                        # If every claim was a meta-statement, return [] (-> ABSTAIN)
+                        # instead of falling through to the regex splitter.
+                        return _drop_meta_claims(cleaned)[:8]
         except (json.JSONDecodeError, AttributeError):
             pass
 
@@ -392,7 +409,7 @@ Instructions:
             s_clean = s.strip()
             if len(s_clean) > 20 and not s_clean.lower().startswith(("based on", "in conclusion", "overall")):
                 result.append(s_clean)
-        return result[:8]
+        return _drop_meta_claims(result)[:8]
 
     def generate_gap_query(self, original_question: str, weak_claims: list) -> str:
         if not weak_claims:

@@ -26,12 +26,20 @@ class MedRagConfig:
     bm25_weight: float = 0.4
     dense_weight: float = 0.6
     dense_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    vector_store: str = "chromadb"     # "chromadb" | "faiss" | "numpy"
+    collection_name: str = "medrag_corpus"
+    chroma_persist_dir: Optional[str] = "./data/chroma_db"
     use_reranker: bool = True
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
     # ── NLI Verifier ─────────────────────────────────────────────────────────
-    nli_model: str = "cross-encoder/nli-MiniLM2-L6-H768"
+    nli_model: str = "ygivenx/modernbert-base-mednli"
     nli_batch_size: int = 16
+
+    # ── Relevance gate ────────────────────────────────────────────────────────
+    # If set, abstain when the best round-1 reranker score is below this value
+    # (out-of-corpus questions). None disables. Calibrate on in/out-of-corpus questions.
+    relevance_threshold: Optional[float] = None
 
     # ── Evidence thresholds ───────────────────────────────────────────────────
     support_threshold: float = 0.70    # min entailment for a claim to be "supported"
@@ -119,6 +127,9 @@ class MedRagConfig:
             cfg.llm_base_url = os.environ["LLM_BASE_URL"].strip()
         if os.environ.get("LLM_API_KEY"):
             cfg.llm_api_key = os.environ["LLM_API_KEY"].strip()
+
+        if os.environ.get("NLI_MODEL"):
+            cfg.nli_model = os.environ["NLI_MODEL"].strip()
 
         return cfg
 

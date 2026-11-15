@@ -126,6 +126,9 @@ class MedRagPipeline:
 
         # Phase 2
         use_reranker = bool(config.use_reranker and getattr(config, "enable_reranking", True))
+        vector_backend = getattr(config, "vector_store", "chromadb")
+        collection_name = getattr(config, "collection_name", "medrag_corpus")
+        persist_dir = getattr(config, "chroma_persist_dir", "./data/chroma_db")
         self.retriever = HybridRetriever(
             dense_model=config.dense_model,
             reranker_model=config.reranker_model,
@@ -134,6 +137,9 @@ class MedRagPipeline:
             top_k_retrieve=config.top_k_retrieve,
             top_k_rerank=config.top_k_rerank,
             use_reranker=use_reranker,
+            vector_backend=vector_backend,
+            collection_name=collection_name,
+            persist_dir=persist_dir,
         )
         self.retriever.index(documents)
 
@@ -208,6 +214,32 @@ class MedRagPipeline:
                     new_added += 1
 
             print(f"  +{new_added} new docs retrieved  (total unique={len(all_retrieved)})")
+
+            # Relevance gate (round 1): the retriever always returns top-k, even for
+            # out-of-corpus questions. Abstain if nothing is plausibly relevant.
+            rel_threshold = getattr(self.config, "relevance_threshold", None)
+            if round_num == 1 and rel_threshold is not None:
+                rerank_scores = [h.rerank_score for h in new_hits if h.rerank_score is not None]
+                if rerank_scores:
+                    best_rel = max(rerank_scores)
+                    print(f"  best rerank score={best_rel:.3f} (gate={rel_threshold})")
+                    if best_rel < rel_threshold:
+                        decision = ControllerDecision(
+                            action=Action.ABSTAIN,
+                            reason=(
+                                f"Retrieved documents are not relevant to the question "
+                                f"(best rerank score {best_rel:.3f} < {rel_threshold}); "
+                                "the question appears to be outside the indexed corpus."
+                            ),
+                            confidence=0.0,
+                        )
+                        history.append({
+                            "round": round_num, "query": search_query,
+                            "new_docs": new_added, "total_docs": len(all_retrieved),
+                            "n_claims": 0, "action": decision.action.value,
+                            "reason": decision.reason,
+                        })
+                        break
 
             if not all_retrieved:
                 print("  [Warning] No documents retrieved.")
@@ -606,7 +638,7 @@ class MedRagPipeline:
 class _DefaultConfig:
     dense_model = "sentence-transformers/all-MiniLM-L6-v2"
     reranker_model = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    nli_model = "cross-encoder/nli-MiniLM2-L6-H768"
+    nli_model = "ygivenx/modernbert-base-mednli"
     bm25_weight = 0.4
     dense_weight = 0.6
     top_k_retrieve = 20

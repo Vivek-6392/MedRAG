@@ -104,7 +104,11 @@ class ClaimEvidence:
         contradictions exist in the literature.
         """
         if self.conflict_score >= self.conflict_threshold:
-            return ClaimStatus.CONFLICTED
+            # CONFLICTED means the literature disagrees (support AND contradiction).
+            # Contradiction with no credible support is just an unverified claim.
+            if self.support_score >= self.support_threshold:
+                return ClaimStatus.CONFLICTED
+            return ClaimStatus.UNCERTAIN
         if (
             self.support_score >= self.support_threshold
             and any(not passage.illustrative for passage in self.supporting_passages)

@@ -90,6 +90,75 @@ class TestDocumentValidation(unittest.TestCase):
         self.assertIn("Duplicate document id 'doc1'", str(ctx.exception))
 
 
+class TestUploadedMedicalDocumentParsing(unittest.TestCase):
+
+    def test_pdf_parsing_and_chunking(self):
+        import fitz
+        from medrag.document_validator import parse_uploaded_medical_document
+
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_text(
+            (50, 72),
+            "Clinical Guideline for Hypertension Management.\n\n"
+            "First-line antihypertensives include ACE inhibitors, ARBs, and calcium channel blockers. "
+            "Target blood pressure is below 130/80 mmHg in high-risk patients. "
+            "Lifestyle interventions including low-sodium diet and exercise are strongly recommended."
+        )
+        pdf_bytes = doc.write()
+
+        chunks = parse_uploaded_medical_document(
+            file_name="hypertension_guideline.pdf",
+            raw_bytes=pdf_bytes,
+            chunk_size=300,
+            chunk_overlap=50,
+        )
+        self.assertGreater(len(chunks), 0)
+        self.assertEqual(chunks[0].source, "hypertension_guideline.pdf")
+        self.assertTrue(any("ACE inhibitors" in c.text for c in chunks))
+
+    def test_docx_parsing_and_chunking(self):
+        import io
+        import docx
+        from medrag.document_validator import parse_uploaded_medical_document
+
+        doc = docx.Document()
+        doc.add_heading("Clinical Trial on GLP-1 Receptor Agonists", 0)
+        doc.add_paragraph("Semaglutide demonstrated significant cardiovascular risk reduction in patients with type 2 diabetes.")
+        doc.add_paragraph("Common adverse reactions include nausea and vomiting, which are usually mild and transient.")
+        buf = io.BytesIO()
+        doc.save(buf)
+
+        chunks = parse_uploaded_medical_document(
+            file_name="glp1_trial.docx",
+            raw_bytes=buf.getvalue(),
+            chunk_size=300,
+            chunk_overlap=50,
+        )
+        self.assertGreater(len(chunks), 0)
+        self.assertEqual(chunks[0].source, "glp1_trial.docx")
+        self.assertTrue(any("Semaglutide" in c.text for c in chunks))
+
+    def test_txt_parsing_and_chunking(self):
+        from medrag.document_validator import parse_uploaded_medical_document
+
+        raw = (
+            "Emergency Medicine Protocol for Anaphylaxis.\n\n"
+            "Intramuscular epinephrine (1:1000, 0.3-0.5 mg) in the anterolateral thigh is the first-line intervention. "
+            "Administer oxygen, intravenous fluids, and adjunctive antihistamines and glucocorticoids."
+        ).encode("utf-8")
+
+        chunks = parse_uploaded_medical_document(
+            file_name="anaphylaxis_protocol.txt",
+            raw_bytes=raw,
+            chunk_size=300,
+            chunk_overlap=50,
+        )
+        self.assertGreater(len(chunks), 0)
+        self.assertEqual(chunks[0].source, "anaphylaxis_protocol.txt")
+        self.assertTrue(any("epinephrine" in c.text for c in chunks))
+
+
 if __name__ == "__main__":
     unittest.main()
 

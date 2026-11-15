@@ -117,6 +117,48 @@ class TestReciprocalRankFusion(unittest.TestCase):
         self.assertEqual([r.score for r in run1], [r.score for r in run2])
 
 
+class TestChromaVectorStoreIntegration(unittest.TestCase):
+
+    def test_chroma_vector_store_indexing_and_search(self):
+        import numpy as np
+        from medrag.vector_store import ChromaVectorStore
+
+        store = ChromaVectorStore(collection_name="test_unittest_collection", persist_dir=None)
+        doc1 = _make_doc("cardio_1", "Cardiovascular Guidelines")
+        doc2 = _make_doc("renal_1", "Renal Guidelines")
+
+        # Fake 384-d normalized embeddings
+        emb1 = np.zeros(384, dtype=float)
+        emb1[0] = 1.0
+        emb2 = np.zeros(384, dtype=float)
+        emb2[1] = 1.0
+        embs = np.stack([emb1, emb2])
+
+        store.index([doc1, doc2], embs)
+        self.assertGreaterEqual(store.count(), 2)
+
+        # Query aligned with doc1
+        query_emb = np.zeros(384, dtype=float)
+        query_emb[0] = 1.0
+        results = store.search(query_emb, top_k=2)
+
+        self.assertGreater(len(results), 0)
+        self.assertEqual(results[0][0], "cardio_1")
+        self.assertAlmostEqual(results[0][1], 1.0, places=2)
+
+    def test_dense_retriever_with_chroma_backend(self):
+        from medrag.retriever import DenseRetriever
+
+        retriever = DenseRetriever(vector_backend="chromadb", collection_name="test_dense_chroma", persist_dir=None)
+        doc = _make_doc("m1", "Metformin Guidelines")
+        retriever.index([doc])
+
+        hits = retriever.retrieve("metformin", top_k=1)
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0].document.doc_id, "m1")
+        self.assertGreater(hits[0].score, 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
 

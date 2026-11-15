@@ -164,6 +164,9 @@ def get_medqa_textbook_corpus(book_filename: str = "First_Aid_Step1.txt", max_ch
     return p.chunk_textbook(text, book_title=title, source_filename=book_filename)[:max_chunks]
 
 
+from medrag.document_validator import parse_uploaded_medical_document
+
+
 def get_active_config() -> MedRagConfig:
     return MedRagConfig.from_env()
 
@@ -211,7 +214,7 @@ with st.sidebar:
     st.subheader("2. Evidence Verification Thresholds")
     support_threshold = st.slider(
         "Min Support (Entailment)",
-        min_value=0.50,
+        min_value=0.25,
         max_value=0.95,
         value=float(env_cfg.support_threshold),
         step=0.05,
@@ -220,7 +223,7 @@ with st.sidebar:
     conflict_threshold = st.slider(
         "Max Conflict (Contradiction)",
         min_value=0.10,
-        max_value=0.60,
+        max_value=0.95,
         value=float(env_cfg.conflict_threshold),
         step=0.05,
         help="Contradiction score above which a claim is considered Conflicted",
@@ -245,6 +248,52 @@ with st.sidebar:
         value=bool(env_cfg.use_reranker),
         help="Re-rank top BM25 + Dense candidates using ms-marco cross-encoder",
     )
+    vector_store_choice = st.selectbox(
+        "Vector Database Engine",
+        options=["ChromaDB (Persistent on Disk)", "FAISS (High-Performance In-Memory)", "NumPy (Standard)"],
+        index=0,
+        help="Vector database engine storing dense embeddings with cosine similarity search.",
+    )
+    vector_store_backend = "chromadb" if "ChromaDB" in vector_store_choice else ("faiss" if "FAISS" in vector_store_choice else "numpy")
+    if vector_store_backend == "chromadb":
+        st.caption("⚡ Persistent storage active at `./data/chroma_db`")
+
+    st.markdown("**NLI Verification Engine**")
+    nli_options = [
+        "ygivenx/modernbert-base-mednli (Clinical ModernBERT on MedNLI)",
+        "cross-encoder/nli-MiniLM2-L6-H768 (Default Fast Cross-Encoder)",
+        "pritamdeka/PubMedBERT-MNLI-MedNLI (PubMedBERT MedNLI)",
+        "Custom Model",
+    ]
+    default_nli_idx = 0 if "modernbert" in env_cfg.nli_model.lower() else (2 if "pubmedbert" in env_cfg.nli_model.lower() else 1)
+    nli_choice = st.selectbox(
+        "NLI Verification Model",
+        options=nli_options,
+        index=default_nli_idx,
+        help="Model used for sentence-level clinical claim verification and contradiction detection.",
+    )
+    if "modernbert" in nli_choice.lower() or "ygivenx" in nli_choice.lower():
+        selected_nli_model = "ygivenx/modernbert-base-mednli"
+    elif "pubmedbert" in nli_choice.lower():
+        selected_nli_model = "pritamdeka/PubMedBERT-MNLI-MedNLI"
+    elif "minilm" in nli_choice.lower() or "cross-encoder" in nli_choice.lower():
+        selected_nli_model = "cross-encoder/nli-MiniLM2-L6-H768"
+    elif "custom" in nli_choice.lower():
+        selected_nli_model = st.text_input("Custom NLI Model Name", value=env_cfg.nli_model)
+    else:
+        selected_nli_model = "ygivenx/modernbert-base-mednli"
+
+    if "ygivenx" in selected_nli_model:
+        has_token = bool(os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN"))
+        st.caption("🔒 *ygivenx/modernbert-base-mednli* is a gated MedNLI model requiring Hugging Face authorization." if not has_token else "✅ Hugging Face authentication detected")
+        hf_token_input = st.text_input(
+            "Hugging Face Token (HF_TOKEN)",
+            value=os.environ.get("HF_TOKEN", ""),
+            type="password",
+            help="User access token with permission to access ygivenx/modernbert-base-mednli on Hugging Face.",
+        )
+        if hf_token_input:
+            os.environ["HF_TOKEN"] = hf_token_input.strip()
 
     st.divider()
 
@@ -259,12 +308,84 @@ with st.sidebar:
         corpus_options.append("MedQA Textbook: First Aid Step 1")
         corpus_options.append("MedQA Textbook: Pathoma Pathology")
         corpus_options.append("MedQA Textbook: Pharmacology (Katzung)")
-    corpus_options.extend(["Built-in Sample Corpus (15 docs)", "Upload Custom JSON/JSONL"])
+    corpus_options.append("📄 Upload Medical Document (PDF, DOCX, TXT)")
+    corpus_options.append("Built-in Sample Corpus (15 docs)")
+    corpus_options.append("Upload Custom JSON/JSONL")
 
     corpus_choice = st.radio("Corpus Source", corpus_options, index=0)
     uploaded_file = None
-    if corpus_choice == "Upload Custom JSON/JSONL":
+    if corpus_choice == "📄 Upload Medical Document (PDF, DOCX, TXT)":
+        uploaded_file = st.file_uploader(
+            "Upload clinical guideline, paper, or report",
+            type=["pdf", "docx", "doc", "txt", "md"],
+            help="Upload a PDF, Word document, or text file to query and verify with MedRAG.",
+        )
+        if uploaded_file is not None:
+            st.caption(f"📎 **{uploaded_file.name}** ({uploaded_file.size / 1024:.1f} KB ready)")
+    elif corpus_choice == "Upload Custom JSON/JSONL":
         uploaded_file = st.file_uploader("Upload corpus file", type=["json", "jsonl"])
+
+    # Resolve active knowledge base documents and collection name immediately upon selection
+    active_docs = []
+    active_collection = "medrag_corpus"
+
+    if corpus_choice == "PubMedQA Real Research Abstracts (ori_pqal.json)":
+        active_collection = "medrag_pubmedqa"
+        active_docs = get_pubmedqa_corpus()
+    elif corpus_choice == "MedQA Textbook: First Aid Step 1":
+        active_collection = "medrag_first_aid_step1"
+        active_docs = get_medqa_textbook_corpus("First_Aid_Step1.txt")
+    elif corpus_choice == "MedQA Textbook: Pathoma Pathology":
+        active_collection = "medrag_pathoma"
+        active_docs = get_medqa_textbook_corpus("Pathoma_Husain.txt")
+    elif corpus_choice == "MedQA Textbook: Pharmacology (Katzung)":
+        active_collection = "medrag_pharmacology"
+        active_docs = get_medqa_textbook_corpus("Pharmacology_Katzung.txt")
+    elif corpus_choice == "Built-in Sample Corpus (15 docs)":
+        active_collection = "medrag_sample_corpus"
+        active_docs = get_sample_corpus()
+    elif corpus_choice == "📄 Upload Medical Document (PDF, DOCX, TXT)" and uploaded_file is not None:
+        slug = re.sub(r"[^a-zA-Z0-9_]+", "_", uploaded_file.name).strip("_").lower()[:35]
+        active_collection = f"medrag_user_{slug}"
+        try:
+            active_docs = parse_uploaded_medical_document(uploaded_file.name, uploaded_file.getvalue())
+        except Exception as e:
+            st.error(f"Error parsing document: {e}")
+            active_docs = []
+    elif corpus_choice == "Upload Custom JSON/JSONL" and uploaded_file is not None:
+        from medrag.document_validator import validate_corpus
+        slug = re.sub(r"[^a-zA-Z0-9_]+", "_", uploaded_file.name).strip("_").lower()[:35]
+        active_collection = f"medrag_custom_{slug}"
+        try:
+            if uploaded_file.name.endswith(".jsonl"):
+                content = uploaded_file.getvalue().decode("utf-8", errors="replace")
+                items = [json.loads(line) for line in content.splitlines() if line.strip()]
+            else:
+                items = json.loads(uploaded_file.getvalue().decode("utf-8", errors="replace"))
+            if not isinstance(items, list):
+                items = [items]
+            active_docs = validate_corpus(items)
+        except Exception as e:
+            st.error(f"Error validating corpus: {e}")
+            active_docs = []
+
+    # Vector DB Indexing Status & Auto-Index immediately upon selection
+    if active_docs and vector_store_backend == "chromadb":
+        from medrag.vector_store import ChromaVectorStore
+        from medrag.retriever import DenseRetriever
+
+        store = ChromaVectorStore(collection_name=active_collection, persist_dir="./data/chroma_db")
+        is_already_indexed = store.count() >= len(active_docs) and store.has_ids([active_docs[0].doc_id, active_docs[-1].doc_id])
+
+        if is_already_indexed:
+            st.success(f"🟢 **Vector DB Ready:** {store.count():,} passages cached in `{active_collection}`", icon="💾")
+        else:
+            with st.spinner(f"Indexing {len(active_docs):,} passages into ChromaDB (`{active_collection}`)..."):
+                dense = DenseRetriever(vector_backend="chromadb", collection_name=active_collection, persist_dir="./data/chroma_db")
+                dense.index(active_docs)
+            st.success(f"✅ **Indexed in ChromaDB:** {len(active_docs):,} passages saved to `{active_collection}`", icon="⚡")
+    elif active_docs:
+        st.info(f"📚 {len(active_docs):,} passages loaded for search.", icon="ℹ️")
 
 # ── Main Header ───────────────────────────────────────────────────────────────
 st.markdown('<div class="main-title">🩺 MedRag</div>', unsafe_allow_html=True)
@@ -339,6 +460,13 @@ with tab_medqa:
     else:
         st.info("Place data_clean in the project root to enable MedQA USMLE inquiries.")
 
+# Active document banner for uploaded medical file mode
+if corpus_choice == "📄 Upload Medical Document (PDF, DOCX, TXT)":
+    if uploaded_file is not None:
+        st.info(f"📄 **Active Medical Document:** `{uploaded_file.name}` ({uploaded_file.size / 1024:.1f} KB). Ask any clinical question below to retrieve and verify evidence directly from this document.")
+    else:
+        st.warning("📄 **Medical Document Mode:** Please upload a PDF, DOCX, DOC, or TXT file using the sidebar on the left before running a query.")
+
 # Query Input
 user_question = st.text_input(
     "Enter clinical question:",
@@ -355,47 +483,11 @@ if run_clicked:
         st.warning("Please enter or select a medical question to analyze.")
         st.stop()
 
-    # Determine corpus
-    if uploaded_file is not None:
-        if uploaded_file.size > 50 * 1024 * 1024:
-            st.error("Uploaded file exceeds maximum allowed size (50 MB).")
-            st.stop()
-        try:
-            from medrag.document_validator import validate_corpus
-            if uploaded_file.name.endswith(".jsonl"):
-                content = uploaded_file.getvalue().decode("utf-8", errors="replace")
-                items = [json.loads(line) for line in content.splitlines() if line.strip()]
-            else:
-                items = json.loads(uploaded_file.getvalue().decode("utf-8", errors="replace"))
-            if not isinstance(items, list):
-                items = [items]
-            documents = validate_corpus(items)
-            st.success(f"Loaded and validated custom corpus with {len(documents)} documents.")
-        except Exception as e:
-            st.error(f"Error validating uploaded corpus: {e}")
-            st.stop()
-    elif corpus_choice == "PubMedQA Real Research Abstracts (ori_pqal.json)":
-        with st.spinner("Loading verified PubMed Central scientific corpus from ori_pqal.json..."):
-            documents = get_pubmedqa_corpus()
-            if not documents:
-                st.error("Failed to load PubMedQA corpus from ori_pqal.json.")
-                st.stop()
-            st.toast(f"Loaded {len(documents)} real PubMed research articles.", icon="🔬")
-    elif corpus_choice.startswith("MedQA Textbook:"):
-        book_map = {
-            "MedQA Textbook: First Aid Step 1": "First_Aid_Step1.txt",
-            "MedQA Textbook: Pathoma Pathology": "Pathoma_Husain.txt",
-            "MedQA Textbook: Pharmacology (Katzung)": "Pharmacology_Katzung.txt",
-        }
-        b_file = book_map.get(corpus_choice, "First_Aid_Step1.txt")
-        with st.spinner(f"Loading {corpus_choice} from data_clean/textbooks/en..."):
-            documents = get_medqa_textbook_corpus(b_file)
-            if not documents:
-                st.error(f"Failed to load textbook {b_file}.")
-                st.stop()
-            st.toast(f"Loaded {len(documents)} textbook sections from {corpus_choice}.", icon="📚")
-    else:
-        documents = get_sample_corpus()
+    # Verify knowledge base
+    documents = active_docs
+    if not documents:
+        st.error("No documents loaded in the selected Knowledge Base. Please choose or upload a valid corpus in the sidebar.")
+        st.stop()
 
     # Build config & LLM Client with centralized provider resolver
     cfg = MedRagConfig.from_env()
@@ -410,6 +502,9 @@ if run_clicked:
     cfg.clinical_confidence_threshold = clinical_confidence_threshold
     cfg.max_search_rounds = max_rounds
     cfg.use_reranker = use_reranker
+    cfg.vector_store = vector_store_backend
+    cfg.collection_name = active_collection
+    cfg.nli_model = selected_nli_model
 
     llm = LLMClient(
         backend=cfg.llm_backend,
