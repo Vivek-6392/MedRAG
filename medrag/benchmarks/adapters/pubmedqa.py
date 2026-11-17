@@ -320,6 +320,10 @@ class PubMedQAAdapter(DatasetAdapter):
         lines.append("")
         lines.append(
             "Instructions: Based on biomedical literature, answer with 'yes', 'no', or 'maybe'.\n"
+            "Decision Guidelines:\n"
+            "- Answer 'yes' if the author's primary findings and conclusions answer the question affirmatively.\n"
+            "- Answer 'no' if the author's primary findings and conclusions answer the question negatively.\n"
+            "- Reserve 'maybe' ONLY when the authors explicitly conclude that the clinical outcome is indeterminate, inconclusive, or contradictory. Do NOT choose 'maybe' merely because the study mentions limitations, small sample sizes, or calls for further research.\n\n"
             "Output your answer strictly in structured JSON format matching this schema:\n"
             "{\n"
             '  "prediction": "yes|no|maybe",\n'
@@ -358,12 +362,21 @@ class PubMedQAAdapter(DatasetAdapter):
                 except Exception:
                     pass
             if not json_obj:
-                match_brace = re.search(r"(\{.*\})", text, re.DOTALL)
-                if match_brace:
+                # Find valid JSON objects using raw_decode to prevent greedy regex failures
+                # when clinical evidence reports append text/schema templates after the JSON.
+                idx = text.find("{")
+                decoder = json.JSONDecoder()
+                while idx != -1:
                     try:
-                        json_obj = json.loads(match_brace.group(1))
+                        candidate, _ = decoder.raw_decode(text[idx:])
+                        if isinstance(candidate, dict) and any(
+                            k in candidate for k in ("prediction", "decision", "final_decision", "abstain")
+                        ):
+                            json_obj = candidate
+                            break
                     except Exception:
                         pass
+                    idx = text.find("{", idx + 1)
 
         if isinstance(json_obj, dict):
             # Check explicit abstention flag

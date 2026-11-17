@@ -123,7 +123,7 @@ class LLMClient:
             return self._mock_complete(prompt)
 
         import time
-        retries = 3
+        retries = 6
         for attempt in range(retries):
             try:
                 client = self._get_client()
@@ -166,7 +166,15 @@ class LLMClient:
             except Exception as e:
                 err_str = str(e)
                 if ("429" in err_str or "rate_limit" in err_str.lower()) and attempt < retries - 1:
-                    time.sleep(1.5 * (attempt + 1))
+                    wait_sec = 5.0 * (attempt + 1)
+                    match_sec = re.search(r"try again in ([\d\.]+)s", err_str, re.IGNORECASE)
+                    if match_sec:
+                        try:
+                            wait_sec = max(wait_sec, float(match_sec.group(1)) + 1.0)
+                        except ValueError:
+                            pass
+                    print(f"[RateLimit] 429 hit from {self.backend}. Backing off for {wait_sec:.1f}s (retry {attempt+1}/{retries})...")
+                    time.sleep(wait_sec)
                     continue
                 self.call_failed = True
                 self.last_error = f"{type(e).__name__}: {str(e)}"
@@ -288,6 +296,7 @@ Instructions:
 - Cite evidence passage numbers in brackets where relevant (e.g. [1], [2]).
 - Acknowledge clinical uncertainties, contraindications, or evidence gaps explicitly.
 - Do NOT extrapolate or state facts not supported by the evidence.
+- For yes/no/maybe questions: answer "yes" if the primary clinical evidence supports the question; answer "no" if the evidence refutes it; reserve "maybe" ONLY when the evidence is explicitly contradictory, indeterminate, or inconclusive (do not choose "maybe" merely because of standard study limitations or sample size caveats).
 
 Answer:"""
 
@@ -300,9 +309,12 @@ Rules:
 - Each claim must be a single, self-contained factual statement.
 - Remove conjunctions that combine multiple distinct clinical assertions.
 - Claims must be specific, falsifiable, and directly verifiable against medical literature.
-- Do not include meta-text (e.g. "The author states that").
+- Do not include meta-text (e.g. "The author states that...").
+- Do NOT include statements about what the evidence says or does not say (e.g. "The evidence does not address...").
+- Extract the actual factual assertions (e.g. drug effects, dosages, outcomes, contraindications).
+- If the answer is a simple yes/no/maybe with brief reasoning, extract 1-2 key factual claims from the reasoning.
 
-Return ONLY a JSON array of strings, no markdown formatting.
+Return ONLY a JSON array of strings (minimum 1 claim if any factual content exists), no markdown formatting.
 Example: ["Metformin is contraindicated in severe renal impairment (eGFR < 30 mL/min/1.73 m2).", "Metformin reduces HbA1c by 1-2%."]"""
 
     _GAP_QUERY_PROMPT = """\

@@ -168,7 +168,10 @@ class MedQAAdapter(DatasetAdapter):
         if env_dir:
             dirs_to_check.append(env_dir)
         dirs_to_check.extend([
+            os.path.join("data_clean", "questions", "US", "4_options"),
+            os.path.join("data_clean", "questions", "US"),
             os.path.join("data", "medqa"),
+            ".",
             os.path.expanduser(os.path.join("~", ".medrag", "data", "medqa")),
         ])
 
@@ -336,16 +339,30 @@ class MedQAAdapter(DatasetAdapter):
 
         # 1. Attempt Structured JSON Parsing
         try:
-            json_match = re.search(r"\{[^{}]*\"selected_option\"[^{}]*\}", text, re.DOTALL)
-            if json_match:
-                payload = json.loads(json_match.group(0))
+            payload = json.loads(text)
+            if isinstance(payload, dict):
                 if payload.get("abstain") is True:
                     return None
-                opt = payload.get("selected_option")
+                opt = payload.get("selected_option") or payload.get("answer") or payload.get("prediction")
                 if opt and str(opt).strip().upper() in self.CANONICAL_OPTIONS:
                     return str(opt).strip().upper()
-        except (json.JSONDecodeError, AttributeError):
+        except Exception:
             pass
+
+        idx = text.find("{")
+        decoder = json.JSONDecoder()
+        while idx != -1:
+            try:
+                candidate, _ = decoder.raw_decode(text[idx:])
+                if isinstance(candidate, dict):
+                    if candidate.get("abstain") is True:
+                        return None
+                    opt = candidate.get("selected_option") or candidate.get("answer") or candidate.get("prediction")
+                    if opt and str(opt).strip().upper() in self.CANONICAL_OPTIONS:
+                        return str(opt).strip().upper()
+            except Exception:
+                pass
+            idx = text.find("{", idx + 1)
 
         # 2. Check for explicit abstention signals
         abstain_markers = [

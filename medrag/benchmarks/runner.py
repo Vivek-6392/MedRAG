@@ -45,6 +45,14 @@ class EvaluationRunner:
         self.logger = logger or get_logger(f"medrag.eval.{config.experiment_id}")
         self.recorder = PredictionRecorder(config.output_dir, config.experiment_id)
 
+        # Attach file handler to write logs/run.log alongside predictions
+        _log_path = os.path.join(config.output_dir, config.experiment_id, "logs", "run.log")
+        os.makedirs(os.path.dirname(_log_path), exist_ok=True)
+        _fh = logging.FileHandler(_log_path, encoding="utf-8")
+        _fh.setLevel(logging.DEBUG)
+        _fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+        self.logger.addHandler(_fh)
+
         # 1. Resolve Dataset Adapter
         self.adapter: DatasetAdapter = adapter or BenchmarkRegistry.get(config.benchmark_name)
 
@@ -143,169 +151,201 @@ class EvaluationRunner:
         t_start = time.time()
         protocol_clean = (self.config.protocol or "medrag_full").strip().lower()
 
-        for idx, example in enumerate(self.examples, 1):
-            if self.config.resume and self.recorder.is_completed(example.example_id):
+        interrupted = False
+        try:
+            for idx, example in enumerate(self.examples, 1):
+                if self.config.resume and self.recorder.is_completed(example.example_id):
+                    self.logger.info(
+                        f"[{idx}/{len(self.examples)}] Resuming: Skipping already completed '{example.example_id}'"
+                    )
+                    continue
+
                 self.logger.info(
-                    f"[{idx}/{len(self.examples)}] Resuming: Skipping already completed '{example.example_id}'"
+                    f"[{idx}/{len(self.examples)}] Evaluating '{example.example_id}' "
+                    f"(gold={example.gold_answer})"
                 )
-                continue
 
-            self.logger.info(
-                f"[{idx}/{len(self.examples)}] Evaluating '{example.example_id}' "
-                f"(gold={example.gold_answer})"
-            )
+                is_provided_context = protocol_clean in ("pubmedqa_provided_context", "provided_context")
+                try:
+                    prompt = self.adapter.construct_input(example, include_context=is_provided_context)
+                except TypeError:
+                    prompt = self.adapter.construct_input(example)
+                t0 = time.time()
 
-            is_provided_context = protocol_clean in ("pubmedqa_provided_context", "provided_context")
-            try:
-                prompt = self.adapter.construct_input(example, include_context=is_provided_context)
-            except TypeError:
-                prompt = self.adapter.construct_input(example)
-            t0 = time.time()
+                try:
+                    result: PipelineResult = self._execute_protocol(prompt, example)
+                    latency = round(time.time() - t0, 3)
+                except Exception as e:
+                    self.logger.error(f"Error evaluating '{example.example_id}': {e}", exc_info=True)
+                    # Record failed/abstained execution safely
+                    rec = PredictionRecord(
+                        example_id=example.example_id,
+                        dataset=example.dataset,
+                        split=example.split,
+                        question=example.question,
+                        gold_answer=example.gold_answer,
+                        predicted_answer=None,
+                        raw_model_response="",
+                        normalized_answer=None,
+                        is_correct=False,
+                        abstained=True,
+                        decision_action="ABSTAIN",
+                        decision_reason=f"Pipeline execution failure: {str(e)}",
+                        latency_seconds=round(time.time() - t0, 3),
+                        metadata={"error": str(e), "protocol": protocol_clean},
+                    )
+                    self.recorder.record_prediction(rec)
+                    continue
 
-            try:
-                result: PipelineResult = self._execute_protocol(prompt, example)
-                latency = round(time.time() - t0, 3)
-            except Exception as e:
-                self.logger.error(f"Error evaluating '{example.example_id}': {e}", exc_info=True)
-                # Record failed/abstained execution safely
+                raw_response = result.final_answer
+                norm_answer = self.adapter.normalize_answer(raw_response, example)
+
+                # Determine decision action string
+                action_str = result.action.value if hasattr(result.action, "value") else str(result.action)
+
+                # Check abstention: either controller signaled ABSTAIN or response could not be parsed
+                abstained = (action_str == "ABSTAIN" or norm_answer is None)
+                if abstained:
+                    is_correct = False
+                else:
+                    is_correct = self.adapter.evaluate_prediction(norm_answer, example.gold_answer, example)
+
+                # Extract retrieved doc IDs and scores
+                retrieved_ids: List[str] = []
+                retrieval_scores: Dict[str, float] = {}
+                for rdoc in result.retrieved_docs:
+                    did = rdoc.document.doc_id
+                    retrieved_ids.append(did)
+                    retrieval_scores[did] = round(rdoc.score, 4)
+
+                # Extract claim-level verification state
+                generated_claims: List[str] = []
+                supporting_ids: List[str] = []
+                contradicting_ids: List[str] = []
+                claim_verification_details: List[Dict[str, Any]] = []
+                heuristic_score: Optional[float] = None
+
+                if result.evidence_state:
+                    heuristic_score = round(result.evidence_state.mean_confidence, 4)
+                    for c_idx, ce in enumerate(result.evidence_state.claim_evidences, 1):
+                        generated_claims.append(ce.claim)
+                        status_name = getattr(ce, "verification_status", "INSUFFICIENT_EVIDENCE")
+                        sup_list = [p.to_dict() for p in ce.supporting_passages]
+                        con_list = [p.to_dict() for p in getattr(ce, "contradicting_passages", getattr(ce, "refuting_passages", []))]
+                        claim_verification_details.append({
+                            "claim_id": f"claim_{c_idx}",
+                            "claim_text": ce.claim,
+                            "status": status_name,
+                            "nli_entailment": round(ce.support_score, 4),
+                            "nli_contradiction": round(ce.conflict_score, 4),
+                            "supporting_passages": sup_list,
+                            "contradicting_passages": con_list,
+                        })
+                        for p in ce.supporting_passages:
+                            if not p.illustrative and p.doc_id not in supporting_ids:
+                                supporting_ids.append(p.doc_id)
+                        for p in getattr(ce, "contradicting_passages", getattr(ce, "refuting_passages", [])):
+                            if not getattr(p, "illustrative", False) and getattr(p, "doc_id", None) not in contradicting_ids:
+                                contradicting_ids.append(p.doc_id)
+
+                # Extract last decision reason
+                decision_reason = ""
+                if result.history:
+                    decision_reason = result.history[-1].get("reason", "")
+
+                # Approximate token usage
+                prompt_tokens = len(prompt.split())
+                completion_tokens = len(raw_response.split())
+                token_usage = {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": prompt_tokens + completion_tokens,
+                }
+
+                rec_metadata: Dict[str, Any] = {
+                    "config_hash": self.config.config_hash(),
+                    "llm_backend": self.config.llm_backend,
+                    "llm_model": self.config.llm_model,
+                    "protocol": protocol_clean,
+                    "claim_verification_details": claim_verification_details,
+                }
+                if protocol_clean in ("pubmedqa_retrieval", "retrieval"):
+                    rec_metadata["reference_pmid"] = example.example_id
+                    norm_ex_id = str(example.example_id).strip().lower()
+                    ret_match = any(
+                        norm_ex_id in did.lower() or did.lower().replace("pmid_", "").split("_")[0] == norm_ex_id
+                        for did in retrieved_ids
+                    )
+                    rec_metadata["reference_retrieved"] = ret_match
+
+                # Create and record prediction record
                 rec = PredictionRecord(
                     example_id=example.example_id,
                     dataset=example.dataset,
                     split=example.split,
                     question=example.question,
                     gold_answer=example.gold_answer,
-                    predicted_answer=None,
-                    raw_model_response="",
-                    normalized_answer=None,
-                    is_correct=False,
-                    abstained=True,
-                    decision_action="ABSTAIN",
-                    decision_reason=f"Pipeline execution failure: {str(e)}",
-                    latency_seconds=round(time.time() - t0, 3),
-                    metadata={"error": str(e), "protocol": protocol_clean},
+                    predicted_answer=norm_answer,
+                    raw_model_response=raw_response,
+                    normalized_answer=norm_answer,
+                    is_correct=is_correct,
+                    abstained=abstained,
+                    retrieved_doc_ids=retrieved_ids,
+                    retrieval_scores=retrieval_scores,
+                    generated_claims=generated_claims,
+                    supporting_evidence_ids=supporting_ids,
+                    contradicting_evidence_ids=contradicting_ids,
+                    rounds=result.rounds,
+                    decision_action=action_str,
+                    decision_reason=decision_reason,
+                    heuristic_evidence_score=heuristic_score,
+                    latency_seconds=latency,
+                    token_usage=token_usage,
+                    metadata=rec_metadata,
                 )
                 self.recorder.record_prediction(rec)
-                continue
 
-            raw_response = result.final_answer
-            norm_answer = self.adapter.normalize_answer(raw_response, example)
+                # Record round-by-round retrieval traces
+                traces: List[RetrievalTrace] = []
+                for h in result.history:
+                    traces.append(RetrievalTrace(
+                        example_id=example.example_id,
+                        round_number=h.get("round", 1),
+                        search_query=h.get("query", ""),
+                        new_docs_count=h.get("new_docs", 0),
+                        total_docs_count=h.get("total_docs", 0),
+                    ))
+                self.recorder.record_retrieval_traces(traces)
 
-            # Determine decision action string
-            action_str = result.action.value if hasattr(result.action, "value") else str(result.action)
+                # Gentle pacing for cloud providers with per-minute token limits (e.g. Groq 8k TPM)
+                if getattr(self.config, "llm_backend", "").lower() == "groq":
+                    time.sleep(2.0)
 
-            # Check abstention: either controller signaled ABSTAIN or response could not be parsed
-            abstained = (action_str == "ABSTAIN" or norm_answer is None)
-            if abstained:
-                is_correct = False
-            else:
-                is_correct = self.adapter.evaluate_prediction(norm_answer, example.gold_answer, example)
-
-            # Extract retrieved doc IDs and scores
-            retrieved_ids: List[str] = []
-            retrieval_scores: Dict[str, float] = {}
-            for rdoc in result.retrieved_docs:
-                did = rdoc.document.doc_id
-                retrieved_ids.append(did)
-                retrieval_scores[did] = round(rdoc.score, 4)
-
-            # Extract claim-level verification state
-            generated_claims: List[str] = []
-            supporting_ids: List[str] = []
-            contradicting_ids: List[str] = []
-            claim_verification_details: List[Dict[str, Any]] = []
-            heuristic_score: Optional[float] = None
-
-            if result.evidence_state:
-                heuristic_score = round(result.evidence_state.mean_confidence, 4)
-                for c_idx, ce in enumerate(result.evidence_state.claim_evidences, 1):
-                    generated_claims.append(ce.claim)
-                    status_name = getattr(ce, "verification_status", "INSUFFICIENT_EVIDENCE")
-                    sup_list = [p.to_dict() for p in ce.supporting_passages]
-                    con_list = [p.to_dict() for p in getattr(ce, "contradicting_passages", getattr(ce, "refuting_passages", []))]
-                    claim_verification_details.append({
-                        "claim_id": f"claim_{c_idx}",
-                        "claim_text": ce.claim,
-                        "status": status_name,
-                        "nli_entailment": round(ce.support_score, 4),
-                        "nli_contradiction": round(ce.conflict_score, 4),
-                        "supporting_passages": sup_list,
-                        "contradicting_passages": con_list,
-                    })
-                    for p in ce.supporting_passages:
-                        if not p.illustrative and p.doc_id not in supporting_ids:
-                            supporting_ids.append(p.doc_id)
-                    for p in getattr(ce, "contradicting_passages", getattr(ce, "refuting_passages", [])):
-                        if not getattr(p, "illustrative", False) and getattr(p, "doc_id", None) not in contradicting_ids:
-                            contradicting_ids.append(p.doc_id)
-
-            # Extract last decision reason
-            decision_reason = ""
-            if result.history:
-                decision_reason = result.history[-1].get("reason", "")
-
-            # Approximate token usage
-            prompt_tokens = len(prompt.split())
-            completion_tokens = len(raw_response.split())
-            token_usage = {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens,
-            }
-
-            rec_metadata: Dict[str, Any] = {
-                "config_hash": self.config.config_hash(),
-                "llm_backend": self.config.llm_backend,
-                "llm_model": self.config.llm_model,
-                "protocol": protocol_clean,
-                "claim_verification_details": claim_verification_details,
-            }
-            if protocol_clean in ("pubmedqa_retrieval", "retrieval"):
-                rec_metadata["reference_pmid"] = example.example_id
-                norm_ex_id = str(example.example_id).strip().lower()
-                ret_match = any(
-                    norm_ex_id in did.lower() or did.lower().replace("pmid_", "").split("_")[0] == norm_ex_id
-                    for did in retrieved_ids
-                )
-                rec_metadata["reference_retrieved"] = ret_match
-
-            # Create and record prediction record
-            rec = PredictionRecord(
-                example_id=example.example_id,
-                dataset=example.dataset,
-                split=example.split,
-                question=example.question,
-                gold_answer=example.gold_answer,
-                predicted_answer=norm_answer,
-                raw_model_response=raw_response,
-                normalized_answer=norm_answer,
-                is_correct=is_correct,
-                abstained=abstained,
-                retrieved_doc_ids=retrieved_ids,
-                retrieval_scores=retrieval_scores,
-                generated_claims=generated_claims,
-                supporting_evidence_ids=supporting_ids,
-                contradicting_evidence_ids=contradicting_ids,
-                rounds=result.rounds,
-                decision_action=action_str,
-                decision_reason=decision_reason,
-                heuristic_evidence_score=heuristic_score,
-                latency_seconds=latency,
-                token_usage=token_usage,
-                metadata=rec_metadata,
+        except KeyboardInterrupt:
+            interrupted = True
+            evaluated_so_far = self.recorder.load_all_predictions()
+            partial_metrics = MetricRegistry.compute_all(evaluated_so_far)
+            partial_dict = partial_metrics.model_dump()
+            # Mark manifest as interrupted (partial) with current metrics
+            self.manifest.status = "interrupted"
+            self.manifest.notes = (
+                f"Run interrupted by user after {len(evaluated_so_far)}/{len(self.examples)} examples. "
+                f"Partial accuracy: {partial_metrics.accuracy:.3f}"
             )
-            self.recorder.record_prediction(rec)
-
-            # Record round-by-round retrieval traces
-            traces: List[RetrievalTrace] = []
-            for h in result.history:
-                traces.append(RetrievalTrace(
-                    example_id=example.example_id,
-                    round_number=h.get("round", 1),
-                    search_query=h.get("query", ""),
-                    new_docs_count=h.get("new_docs", 0),
-                    total_docs_count=h.get("total_docs", 0),
-                ))
-            self.recorder.record_retrieval_traces(traces)
+            from datetime import datetime, timezone
+            self.manifest.completed_at = datetime.now(timezone.utc).isoformat()
+            self.manifest.summary_metrics = partial_dict
+            self.recorder.save_manifest(self.manifest)
+            self.recorder.save_metrics(partial_dict)
+            self.logger.warning(
+                f"Evaluation interrupted after {len(evaluated_so_far)}/{len(self.examples)} examples. "
+                f"Partial results saved. Resume with --config to continue."
+            )
+            print(
+                f"\n[Interrupted] Saved partial results ({len(evaluated_so_far)}/{len(self.examples)} examples). "
+                f"Re-run with same experiment ID to resume.\n"
+            )
+            return partial_metrics
 
         # 7. Aggregate all evaluated records
         all_records = self.recorder.load_all_predictions()
